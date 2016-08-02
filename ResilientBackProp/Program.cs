@@ -1,8 +1,4 @@
 ﻿using System;
-// using System.Collections.Generic;
-// using System.Linq;
-// using System.Text;
-// using System.Threading.Tasks;
 
 namespace ResilientBackProp
 {
@@ -450,39 +446,39 @@ namespace ResilientBackProp
         public void SetWeights(double[] weights)
         {
             // copy weights and biases in weights[] array to i-h weights, i-h biases, h-o weights, h-o biases
-            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
+            int numWeights = (this.sizes[0] * this.sizes[1]) +
+                (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] +
+                this.sizes[NeuralNetwork.layer_count - 1];
             if (weights.Length != numWeights)
                 throw new Exception("Bad weights array in SetWeights");
 
             int k = 0; // points into weights param
 
-            for (int i = 0; i < this.sizes[0]; ++i)
-                for (int j = 0; j < this.sizes[1]; ++j)
-                    this.weights[1][i][j] = weights[k++];
-            for (int i = 0; i < this.sizes[1]; ++i)
-                this.biases[1][i] = weights[k++];
-            for (int i = 0; i < this.sizes[1]; ++i)
-                for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)
-                    this.weights[2][i][j] = weights[k++];
-            for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
-                this.biases[2][i] = weights[k++];
+            for (int layer = 1; layer < NeuralNetwork.layer_count; layer++)
+            {
+                for (int i = 0; i < this.sizes[layer - 1]; ++i)
+                    for (int j = 0; j < this.sizes[layer]; ++j)
+                        this.weights[layer][i][j] = weights[k++];
+                for (int i = 0; i < this.sizes[layer]; ++i)
+                    this.biases[layer][i] = weights[k++];
+            }
         }
 
         public double[] GetWeights()
         {
-            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
+            int numWeights = (this.sizes[0] * this.sizes[1]) +
+                (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] +
+                this.sizes[NeuralNetwork.layer_count - 1];
             double[] result = new double[numWeights];
             int k = 0;
-            for (int i = 0; i < this.weights[1].Length; ++i)
-                for (int j = 0; j < this.weights[1][0].Length; ++j)
-                    result[k++] = this.weights[1][i][j];
-            for (int i = 0; i < this.biases[1].Length; ++i)
-                result[k++] = this.biases[1][i];
-            for (int i = 0; i < this.weights[2].Length; ++i)
-                for (int j = 0; j < this.weights[2][0].Length; ++j)
-                    result[k++] = this.weights[2][i][j];
-            for (int i = 0; i < this.biases[2].Length; ++i)
-                result[k++] = this.biases[2][i];
+            for (int layer = 1; layer < NeuralNetwork.layer_count; layer++)
+            {
+                for (int i = 0; i < this.weights[layer].Length; ++i)
+                    for (int j = 0; j < this.weights[layer][0].Length; ++j)
+                        result[k++] = this.weights[layer][i][j];
+                for (int i = 0; i < this.biases[layer].Length; ++i)
+                    result[k++] = this.biases[layer][i];
+            }
             return result;
         }
 
