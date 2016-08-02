@@ -294,52 +294,54 @@ namespace ResilientBackProp
                     ZeroOut(allBiasGradsAcc[layer]);
                 }
 
-                double[] xValues = new double[sizes[0]]; // inputs
-                double[] tValues = new double[sizes[2]]; // target values
                 for (int row = 0; row < trainData.Length; ++row)  // walk thru all training data
                 {
+                    double[] xValues = new double[this.sizes[0]]; // inputs
+                    double[] tValues = new double[this.sizes[2]]; // target values
                     // no need to visit in random order because all rows processed before any updates ('batch')
-                    Array.Copy(trainData[row], xValues, sizes[0]); // get the inputs
-                    Array.Copy(trainData[row], sizes[0], tValues, 0, sizes[2]); // get the target values
+                    Array.Copy(trainData[row], xValues, this.sizes[0]); // get the inputs
+                    Array.Copy(trainData[row], this.sizes[0], tValues, 0, this.sizes[2]); // get the target values
                     ComputeOutputs(xValues); // copy xValues in, compute outputs using curr weights (and store outputs internally)
 
                     // compute the h-o gradient term/component as in regular back-prop
                     // this term usually is lower case Greek delta but there are too many other deltas below
-                    for (int i = 0; i < sizes[2]; ++i)
+                    for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
                     {
-                        double derivative = (1 - this.values[NeuralNetwork.layer_count - 1][i]) * this.values[NeuralNetwork.layer_count - 1][i]; // derivative of softmax = (1 - y) * y (same as log-sigmoid)
-                        allGradTerms[2][i] = derivative * (this.values[NeuralNetwork.layer_count - 1][i] - tValues[i]); // careful with O-T vs. T-O, O-T is the most usual
+                        double value = this.values[NeuralNetwork.layer_count - 1][i];
+                        double derivative = (1 - value) * value; // derivative of softmax = (1 - y) * y (same as log-sigmoid)
+                        allGradTerms[NeuralNetwork.layer_count - 1][i] = derivative * (value - tValues[i]); // careful with O-T vs. T-O, O-T is the most usual
                     }
 
                     // compute the i-h gradient term/component as in regular back-prop
-                    for (int i = 0; i < sizes[1]; ++i)
+                    for (int layer = layer_count - 2; layer >= 1; layer--)
                     {
-                        double derivative = (1 - this.values[1][i]) * (1 + this.values[1][i]); // derivative of tanh = (1 - y) * (1 + y)
-                        double sum = 0.0;
-                        for (int j = 0; j < sizes[2]; ++j) // each hidden delta is the sum of sizes[2] terms
+                        for (int i = 0; i < this.sizes[layer]; ++i)
                         {
-                            double x = allGradTerms[2][j] * this.weights[2][i][j];
-                            sum += x;
+                            double derivative = (1 - this.values[layer][i]) * (1 + this.values[layer][i]); // derivative of tanh = (1 - y) * (1 + y)
+                            double sum = 0.0;
+                            for (int j = 0; j < this.sizes[layer + 1]; ++j) // each hidden delta is the sum of sizes[2] terms
+                            {
+                                double x = allGradTerms[layer + 1][j] * this.weights[layer + 1][i][j];
+                                sum += x;
+                            }
+                            allGradTerms[layer][i] = derivative * sum;
                         }
-                        allGradTerms[1][i] = derivative * sum;
                     }
 
                     for (int layer = layer_count - 1; layer >= 1; layer--)
                     {
-                        double[] tst;
-                        if (layer == layer_count - 1) { tst = this.values[1]; } else { tst = this.values[0]; }
                         // add input to h-o component to make h-o weight gradients, and accumulate
-                        for (int i = 0; i < sizes[layer - 1]; ++i)
+                        for (int i = 0; i < this.sizes[layer - 1]; ++i)
                         {
-                            for (int j = 0; j < sizes[layer]; ++j)
+                            for (int j = 0; j < this.sizes[layer]; ++j)
                             {
-                                double grad = allGradTerms[layer][j] * tst[i];
+                                double grad = allGradTerms[layer][j] * this.values[layer - 1][i];
                                 allWeightGradsAcc[layer][i][j] += grad;
                             }
                         }
 
                         // the (hidden-to-) output bias gradients
-                        for (int i = 0; i < sizes[layer]; ++i)
+                        for (int i = 0; i < this.sizes[layer]; ++i)
                         {
                             double grad = allGradTerms[layer][i] * 1.0; // dummy input
                             allBiasGradsAcc[layer][i] += grad;
@@ -353,8 +355,6 @@ namespace ResilientBackProp
                 {
                     int size = sizes[layer];
                     int previous_size = sizes[layer - 1];
-                    double[][] this_weights = (layer == 1) ? this.weights[1] : this.weights[2];
-                    double[] this_biases = (layer == 1) ? this.biases[1] : this.biases[2];
 
                     // update input-hidden weights
                     for (int i = 0; i < previous_size; ++i)
@@ -368,13 +368,13 @@ namespace ResilientBackProp
                                 delta = allPrevWeightDeltas[layer][i][j] * etaPlus; // compute delta
                                 if (delta > deltaMax) delta = deltaMax; // keep it in range
                                 double tmp = -Math.Sign(allWeightGradsAcc[layer][i][j]) * delta; // determine direction and magnitude
-                                this_weights[i][j] += tmp; // update weights
+                                this.weights[layer][i][j] += tmp; // update weights
                             }
                             else if (t < 0) // grad changed sign, decrease delta
                             {
                                 delta = allPrevWeightDeltas[layer][i][j] * etaMinus; // the delta (not used, but saved for later)
                                 if (delta < deltaMin) delta = deltaMin; // keep it in range
-                                this_weights[i][j] -= allPrevWeightDeltas[layer][i][j]; // revert to previous weight
+                                this.weights[layer][i][j] -= allPrevWeightDeltas[layer][i][j]; // revert to previous weight
                                 allWeightGradsAcc[layer][i][j] = 0; // forces next if-then branch, next iteration
                             }
                             else // this happens next iteration after 2nd branch above (just had a change in gradient)
@@ -382,7 +382,7 @@ namespace ResilientBackProp
                                 delta = allPrevWeightDeltas[layer][i][j]; // no change to delta
                                                                           // no way should delta be 0 . . .
                                 double tmp = -Math.Sign(allWeightGradsAcc[layer][i][j]) * delta; // determine direction
-                                this_weights[i][j] += tmp; // update
+                                this.weights[layer][i][j] += tmp; // update
                             }
                             //Console.WriteLine(allPrevWeightGradsAcc[1][i][j] + " " + allWeightGradsAcc[1][i][j]); Console.ReadLine();
 
@@ -401,13 +401,13 @@ namespace ResilientBackProp
                             delta = allPrevBiasDeltas[layer][i] * etaPlus; // compute delta
                             if (delta > deltaMax) delta = deltaMax;
                             double tmp = -Math.Sign(allBiasGradsAcc[layer][i]) * delta; // determine direction
-                            this_biases[i] += tmp; // update
+                            this.biases[layer][i] += tmp; // update
                         }
                         else if (t < 0) // grad changed sign, decrease delta
                         {
                             delta = allPrevBiasDeltas[layer][i] * etaMinus; // the delta (not used, but saved later)
                             if (delta < deltaMin) delta = deltaMin;
-                            this_biases[i] -= allPrevBiasDeltas[layer][i]; // revert to previous weight
+                            this.biases[layer][i] -= allPrevBiasDeltas[layer][i]; // revert to previous weight
                             allBiasGradsAcc[layer][i] = 0; // forces next branch, next iteration
                         }
                         else // this happens next iteration after 2nd branch above (just had a change in gradient)
@@ -418,7 +418,7 @@ namespace ResilientBackProp
                             else if (delta < deltaMin) delta = deltaMin;
                             // no way should delta be 0 . . .
                             double tmp = -Math.Sign(allBiasGradsAcc[layer][i]) * delta; // determine direction
-                            this_biases[i] += tmp; // update
+                            this.biases[layer][i] += tmp; // update
                         }
                         allPrevBiasDeltas[layer][i] = delta;
                         allPrevBiasGradsAcc[layer][i] = allBiasGradsAcc[layer][i];
