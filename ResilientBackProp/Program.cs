@@ -484,33 +484,24 @@ namespace ResilientBackProp
 
         public double[] ComputeOutputs(double[] xValues)
         {
-            double[] hSums = new double[this.sizes[1]]; // hidden nodes sums scratch array
-            double[] oSums = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // output nodes sums
-
-            for (int i = 0; i < xValues.Length; ++i) // copy x-values to inputs
-                this.values[0][i] = xValues[i];
-            // note: no need to copy x-values unless you implement a ToString and want to see them.
-            // more efficient is to simply use the xValues[] directly.
-
-            for (int j = 0; j < this.sizes[1]; ++j)  // compute i-h sum of weights * inputs
-                for (int i = 0; i < this.sizes[0]; ++i)
-                    hSums[j] += this.values[0][i] * this.weights[1][i][j]; // note +=
-
-            for (int i = 0; i < this.sizes[1]; ++i)  // add biases to input-to-hidden sums
-                hSums[i] += this.biases[1][i];
-
-            for (int i = 0; i < this.sizes[1]; ++i)   // apply activation
-                this.values[1][i] = HyperTan(hSums[i]); // hard-coded
-
-            for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)   // compute h-o sum of weights * this.values[1]
-                for (int i = 0; i < this.sizes[1]; ++i)
-                    oSums[j] += this.values[1][i] * this.weights[2][i][j];
-
-            for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)  // add biases to input-to-hidden sums
-                oSums[i] += this.biases[2][i];
-
-            double[] softOut = Softmax(oSums); // softmax activation does all this.values[NeuralNetwork.layer_count-1] at once for efficiency
-            Array.Copy(softOut, this.values[NeuralNetwork.layer_count - 1], softOut.Length);
+            Array.Copy(xValues, this.values[0], this.sizes[0]);
+            for (int layer = 1; layer < NeuralNetwork.layer_count; layer++)
+            {
+                double[] sums = new double[this.sizes[layer]]; // hidden nodes sums scratch array
+                Array.Copy(this.biases[layer], sums, this.sizes[layer]);
+                for (int j = 0; j < this.sizes[layer]; ++j)  // compute i-h sum of weights * inputs
+                    for (int i = 0; i < this.sizes[layer - 1]; ++i)
+                        sums[j] += this.values[layer - 1][i] * this.weights[layer][i][j]; // note +=
+                if (layer < NeuralNetwork.layer_count - 1)
+                {
+                    for (int i = 0; i < this.sizes[layer]; ++i)   // apply activation
+                        this.values[layer][i] = HyperTan(sums[i]); // hard-coded
+                }
+                else
+                {
+                    this.values[NeuralNetwork.layer_count - 1] = Softmax(sums);
+                }
+            }
 
             double[] retResult = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // could define a GetOutputs method instead
             Array.Copy(this.values[NeuralNetwork.layer_count - 1], retResult, retResult.Length);
