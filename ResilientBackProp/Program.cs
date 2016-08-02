@@ -248,7 +248,7 @@ namespace ResilientBackProp
         private void InitializeWeights() // helper for ctor
         {
             // initialize weights and biases to random values between 0.0001 and 0.001
-            int numWeights = (numInput * numHidden) + (numHidden * numOutput) + numHidden + numOutput;
+            int numWeights = (this.numInput * this.numHidden) + (this.numHidden * this.numOutput) + this.numHidden + this.numOutput;
             double[] initialWeights = new double[numWeights];
             for (int i = 0; i < initialWeights.Length; ++i)
                 initialWeights[i] = (0.001 - 0.0001) * rnd.NextDouble() + 0.0001;
@@ -332,7 +332,7 @@ namespace ResilientBackProp
                         double sum = 0.0;
                         for (int j = 0; j < sizes[2]; ++j) // each hidden delta is the sum of sizes[2] terms
                         {
-                            double x = allGradTerms[2][j] * hoWeights[i][j];
+                            double x = allGradTerms[2][j] * this.hoWeights[i][j];
                             sum += x;
                         }
                         allGradTerms[1][i] = derivative * sum;
@@ -394,7 +394,7 @@ namespace ResilientBackProp
                             else // this happens next iteration after 2nd branch above (just had a change in gradient)
                             {
                                 delta = allPrevWeightDeltas[layer][i][j]; // no change to delta
-                                                                          // no way should delta be 0 . . . 
+                                                                          // no way should delta be 0 . . .
                                 double tmp = -Math.Sign(allWeightGradsAcc[layer][i][j]) * delta; // determine direction
                                 this_weights[i][j] += tmp; // update
                             }
@@ -430,7 +430,7 @@ namespace ResilientBackProp
 
                             if (delta > deltaMax) delta = deltaMax;
                             else if (delta < deltaMin) delta = deltaMin;
-                            // no way should delta be 0 . . . 
+                            // no way should delta be 0 . . .
                             double tmp = -Math.Sign(allBiasGradsAcc[layer][i]) * delta; // determine direction
                             this_biases[i] += tmp; // update
                         }
@@ -460,27 +460,27 @@ namespace ResilientBackProp
         public void SetWeights(double[] weights)
         {
             // copy weights and biases in weights[] array to i-h weights, i-h biases, h-o weights, h-o biases
-            int numWeights = (numInput * numHidden) + (numHidden * numOutput) + numHidden + numOutput;
+            int numWeights = (this.numInput * this.numHidden) + (this.numHidden * this.numOutput) + this.numHidden + this.numOutput;
             if (weights.Length != numWeights)
                 throw new Exception("Bad weights array in SetWeights");
 
             int k = 0; // points into weights param
 
-            for (int i = 0; i < numInput; ++i)
-                for (int j = 0; j < numHidden; ++j)
+            for (int i = 0; i < this.numInput; ++i)
+                for (int j = 0; j < this.numHidden; ++j)
                     this.ihWeights[i][j] = weights[k++];
-            for (int i = 0; i < numHidden; ++i)
+            for (int i = 0; i < this.numHidden; ++i)
                 this.hBiases[i] = weights[k++];
-            for (int i = 0; i < numHidden; ++i)
-                for (int j = 0; j < numOutput; ++j)
+            for (int i = 0; i < this.numHidden; ++i)
+                for (int j = 0; j < this.numOutput; ++j)
                     this.hoWeights[i][j] = weights[k++];
-            for (int i = 0; i < numOutput; ++i)
+            for (int i = 0; i < this.numOutput; ++i)
                 this.oBiases[i] = weights[k++];
         }
 
         public double[] GetWeights()
         {
-            int numWeights = (numInput * numHidden) + (numHidden * numOutput) + numHidden + numOutput;
+            int numWeights = (this.numInput * this.numHidden) + (this.numHidden * this.numOutput) + this.numHidden + this.numOutput;
             double[] result = new double[numWeights];
             int k = 0;
             for (int i = 0; i < this.ihWeights.Length; ++i)
@@ -498,35 +498,35 @@ namespace ResilientBackProp
 
         public double[] ComputeOutputs(double[] xValues)
         {
-            double[] hSums = new double[numHidden]; // hidden nodes sums scratch array
-            double[] oSums = new double[numOutput]; // output nodes sums
+            double[] hSums = new double[this.numHidden]; // hidden nodes sums scratch array
+            double[] oSums = new double[this.numOutput]; // output nodes sums
 
             for (int i = 0; i < xValues.Length; ++i) // copy x-values to inputs
                 this.inputs[i] = xValues[i];
             // note: no need to copy x-values unless you implement a ToString and want to see them.
             // more efficient is to simply use the xValues[] directly.
 
-            for (int j = 0; j < numHidden; ++j)  // compute i-h sum of weights * inputs
-                for (int i = 0; i < numInput; ++i)
+            for (int j = 0; j < this.numHidden; ++j)  // compute i-h sum of weights * inputs
+                for (int i = 0; i < this.numInput; ++i)
                     hSums[j] += this.inputs[i] * this.ihWeights[i][j]; // note +=
 
-            for (int i = 0; i < numHidden; ++i)  // add biases to input-to-hidden sums
+            for (int i = 0; i < this.numHidden; ++i)  // add biases to input-to-hidden sums
                 hSums[i] += this.hBiases[i];
 
-            for (int i = 0; i < numHidden; ++i)   // apply activation
+            for (int i = 0; i < this.numHidden; ++i)   // apply activation
                 this.hOutputs[i] = HyperTan(hSums[i]); // hard-coded
 
-            for (int j = 0; j < numOutput; ++j)   // compute h-o sum of weights * hOutputs
-                for (int i = 0; i < numHidden; ++i)
-                    oSums[j] += hOutputs[i] * hoWeights[i][j];
+            for (int j = 0; j < this.numOutput; ++j)   // compute h-o sum of weights * this.hOutputs
+                for (int i = 0; i < this.numHidden; ++i)
+                    oSums[j] += this.hOutputs[i] * this.hoWeights[i][j];
 
-            for (int i = 0; i < numOutput; ++i)  // add biases to input-to-hidden sums
-                oSums[i] += oBiases[i];
+            for (int i = 0; i < this.numOutput; ++i)  // add biases to input-to-hidden sums
+                oSums[i] += this.oBiases[i];
 
-            double[] softOut = Softmax(oSums); // softmax activation does all outputs at once for efficiency
-            Array.Copy(softOut, outputs, softOut.Length);
+            double[] softOut = Softmax(oSums); // softmax activation does all this.outputs at once for efficiency
+            Array.Copy(softOut, this.outputs, softOut.Length);
 
-            double[] retResult = new double[numOutput]; // could define a GetOutputs method instead
+            double[] retResult = new double[this.numOutput]; // could define a GetOutputs method instead
             Array.Copy(this.outputs, retResult, retResult.Length);
             return retResult;
         }
@@ -564,14 +564,14 @@ namespace ResilientBackProp
             // percentage correct using winner-takes all
             int numCorrect = 0;
             int numWrong = 0;
-            double[] xValues = new double[numInput]; // inputs
-            double[] tValues = new double[numOutput]; // targets
+            double[] xValues = new double[this.numInput]; // inputs
+            double[] tValues = new double[this.numOutput]; // targets
             double[] yValues; // computed Y
 
             for (int i = 0; i < testData.Length; ++i)
             {
-                Array.Copy(testData[i], xValues, numInput); // parse data into x-values and t-values
-                Array.Copy(testData[i], numInput, tValues, 0, numOutput);
+                Array.Copy(testData[i], xValues, this.numInput); // parse data into x-values and t-values
+                Array.Copy(testData[i], this.numInput, tValues, 0, this.numOutput);
                 yValues = this.ComputeOutputs(xValues);
                 int maxIndex = MaxIndex(yValues); // which cell in yValues has largest value?
 
@@ -587,14 +587,14 @@ namespace ResilientBackProp
         {
             this.SetWeights(weights); // copy the weights to evaluate in
 
-            double[] xValues = new double[numInput]; // inputs
-            double[] tValues = new double[numOutput]; // targets
+            double[] xValues = new double[this.numInput]; // this.inputs
+            double[] tValues = new double[this.numOutput]; // targets
             double sumSquaredError = 0.0;
             for (int i = 0; i < trainData.Length; ++i) // walk through each training data item
             {
                 // following assumes data has all x-values first, followed by y-values!
-                Array.Copy(trainData[i], xValues, numInput); // extract inputs
-                Array.Copy(trainData[i], numInput, tValues, 0, numOutput); // extract targets
+                Array.Copy(trainData[i], xValues, this.numInput); // extract inputs
+                Array.Copy(trainData[i], this.numInput, tValues, 0, this.numOutput); // extract targets
                 double[] yValues = this.ComputeOutputs(xValues);
                 for (int j = 0; j < yValues.Length; ++j)
                     sumSquaredError += ((yValues[j] - tValues[j]) * (yValues[j] - tValues[j]));
