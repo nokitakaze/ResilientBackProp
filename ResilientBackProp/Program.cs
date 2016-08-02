@@ -1,8 +1,14 @@
 ﻿using System;
 
+// See "A Direct Adaptive Method for Faster Backpropagation Learning: The RPROP Algorithm",
+// M. Riedmiller and H. Braun,
+// Proceedings of the 1993 IEEE International Conference on Neural Networks,
+// pp. 586-591
+// This is the orginal version of the algorithm. There are many later variations.
+
 namespace ResilientBackProp
 {
-    class Program
+    class RpropProgram
     {
         static void Main(string[] args)
         {
@@ -271,7 +277,7 @@ namespace ResilientBackProp
                 allPrevGradsAcc[layer].weights = MakeMatrix(prev_size, size, 0.0);
                 allPrevGradsAcc[layer].biases = new double[size];
 
-                allPrevDeltas[layer].weights = MakeMatrix(prev_size, size, 0.0);
+                allPrevDeltas[layer].weights = MakeMatrix(prev_size, size, 0.01);
                 allPrevDeltas[layer].biases = MakeVector(size, 0.01);
             }
 
