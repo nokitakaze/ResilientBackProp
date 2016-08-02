@@ -184,18 +184,9 @@ namespace ResilientBackProp
 
     public class NeuralNetwork
     {
-        private int numInput; // number input nodes
-        private int numHidden;
-        private int numOutput;
-
-        private double[] inputs;
-        private double[][] ihWeights; // input-hidden
-        private double[] hBiases;
-        private double[] hOutputs;
-
-        private double[][] hoWeights; // hidden-output
-        private double[] oBiases;
-        private double[] outputs;
+        private double[][] values;
+        private double[][] biases;
+        private double[][][] weights;
 
         private Random rnd;
         const int layer_count = 3;
@@ -203,24 +194,23 @@ namespace ResilientBackProp
 
         public NeuralNetwork(int numInput, int numHidden, int numOutput)
         {
-            this.numInput = numInput;
-            this.numHidden = numHidden;
-            this.numOutput = numOutput;
-
-            this.sizes = new int[layer_count];
+            this.sizes = new int[NeuralNetwork.layer_count];
             this.sizes[0] = numInput;
             this.sizes[1] = numHidden;
             this.sizes[2] = numOutput;
 
-            this.inputs = new double[numInput];
-
-            this.ihWeights = MakeMatrix(numInput, numHidden, 0.0);
-            this.hBiases = new double[numHidden];
-            this.hOutputs = new double[numHidden];
-
-            this.hoWeights = MakeMatrix(numHidden, numOutput, 0.0);
-            this.oBiases = new double[numOutput];
-            this.outputs = new double[numOutput];
+            this.values = new double[NeuralNetwork.layer_count][];
+            this.biases = new double[NeuralNetwork.layer_count][];
+            this.weights = new double[NeuralNetwork.layer_count][][];
+            for (int layer = 0; layer < NeuralNetwork.layer_count; layer++)
+            {
+                this.values[layer] = new double[this.sizes[layer]];
+            }
+            for (int layer = 1; layer < NeuralNetwork.layer_count; layer++)
+            {
+                this.biases[layer] = new double[this.sizes[layer]];
+                this.weights[layer] = MakeMatrix(this.sizes[layer - 1], this.sizes[layer], 0.0);
+            }
 
             this.rnd = new Random(0);
             this.InitializeWeights(); // all weights and biases
@@ -248,7 +238,7 @@ namespace ResilientBackProp
         private void InitializeWeights() // helper for ctor
         {
             // initialize weights and biases to random values between 0.0001 and 0.001
-            int numWeights = (this.numInput * this.numHidden) + (this.numHidden * this.numOutput) + this.numHidden + this.numOutput;
+            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
             double[] initialWeights = new double[numWeights];
             for (int i = 0; i < initialWeights.Length; ++i)
                 initialWeights[i] = (0.001 - 0.0001) * rnd.NextDouble() + 0.0001;
@@ -321,18 +311,18 @@ namespace ResilientBackProp
                     // this term usually is lower case Greek delta but there are too many other deltas below
                     for (int i = 0; i < sizes[2]; ++i)
                     {
-                        double derivative = (1 - this.outputs[i]) * this.outputs[i]; // derivative of softmax = (1 - y) * y (same as log-sigmoid)
-                        allGradTerms[2][i] = derivative * (this.outputs[i] - tValues[i]); // careful with O-T vs. T-O, O-T is the most usual
+                        double derivative = (1 - this.values[NeuralNetwork.layer_count - 1][i]) * this.values[NeuralNetwork.layer_count - 1][i]; // derivative of softmax = (1 - y) * y (same as log-sigmoid)
+                        allGradTerms[2][i] = derivative * (this.values[NeuralNetwork.layer_count - 1][i] - tValues[i]); // careful with O-T vs. T-O, O-T is the most usual
                     }
 
                     // compute the i-h gradient term/component as in regular back-prop
                     for (int i = 0; i < sizes[1]; ++i)
                     {
-                        double derivative = (1 - this.hOutputs[i]) * (1 + this.hOutputs[i]); // derivative of tanh = (1 - y) * (1 + y)
+                        double derivative = (1 - this.values[1][i]) * (1 + this.values[1][i]); // derivative of tanh = (1 - y) * (1 + y)
                         double sum = 0.0;
                         for (int j = 0; j < sizes[2]; ++j) // each hidden delta is the sum of sizes[2] terms
                         {
-                            double x = allGradTerms[2][j] * this.hoWeights[i][j];
+                            double x = allGradTerms[2][j] * this.weights[2][i][j];
                             sum += x;
                         }
                         allGradTerms[1][i] = derivative * sum;
@@ -341,7 +331,7 @@ namespace ResilientBackProp
                     for (int layer = layer_count - 1; layer >= 1; layer--)
                     {
                         double[] tst;
-                        if (layer == layer_count - 1) { tst = this.hOutputs; } else { tst = this.inputs; }
+                        if (layer == layer_count - 1) { tst = this.values[1]; } else { tst = this.values[0]; }
                         // add input to h-o component to make h-o weight gradients, and accumulate
                         for (int i = 0; i < sizes[layer - 1]; ++i)
                         {
@@ -367,8 +357,8 @@ namespace ResilientBackProp
                 {
                     int size = sizes[layer];
                     int previous_size = sizes[layer - 1];
-                    double[][] this_weights = (layer == 1) ? this.ihWeights : this.hoWeights;
-                    double[] this_biases = (layer == 1) ? this.hBiases : this.oBiases;
+                    double[][] this_weights = (layer == 1) ? this.weights[1] : this.weights[2];
+                    double[] this_biases = (layer == 1) ? this.biases[1] : this.biases[2];
 
                     // update input-hidden weights
                     for (int i = 0; i < previous_size; ++i)
@@ -460,74 +450,74 @@ namespace ResilientBackProp
         public void SetWeights(double[] weights)
         {
             // copy weights and biases in weights[] array to i-h weights, i-h biases, h-o weights, h-o biases
-            int numWeights = (this.numInput * this.numHidden) + (this.numHidden * this.numOutput) + this.numHidden + this.numOutput;
+            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
             if (weights.Length != numWeights)
                 throw new Exception("Bad weights array in SetWeights");
 
             int k = 0; // points into weights param
 
-            for (int i = 0; i < this.numInput; ++i)
-                for (int j = 0; j < this.numHidden; ++j)
-                    this.ihWeights[i][j] = weights[k++];
-            for (int i = 0; i < this.numHidden; ++i)
-                this.hBiases[i] = weights[k++];
-            for (int i = 0; i < this.numHidden; ++i)
-                for (int j = 0; j < this.numOutput; ++j)
-                    this.hoWeights[i][j] = weights[k++];
-            for (int i = 0; i < this.numOutput; ++i)
-                this.oBiases[i] = weights[k++];
+            for (int i = 0; i < this.sizes[0]; ++i)
+                for (int j = 0; j < this.sizes[1]; ++j)
+                    this.weights[1][i][j] = weights[k++];
+            for (int i = 0; i < this.sizes[1]; ++i)
+                this.biases[1][i] = weights[k++];
+            for (int i = 0; i < this.sizes[1]; ++i)
+                for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)
+                    this.weights[2][i][j] = weights[k++];
+            for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
+                this.biases[2][i] = weights[k++];
         }
 
         public double[] GetWeights()
         {
-            int numWeights = (this.numInput * this.numHidden) + (this.numHidden * this.numOutput) + this.numHidden + this.numOutput;
+            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
             double[] result = new double[numWeights];
             int k = 0;
-            for (int i = 0; i < this.ihWeights.Length; ++i)
-                for (int j = 0; j < this.ihWeights[0].Length; ++j)
-                    result[k++] = this.ihWeights[i][j];
-            for (int i = 0; i < this.hBiases.Length; ++i)
-                result[k++] = this.hBiases[i];
-            for (int i = 0; i < this.hoWeights.Length; ++i)
-                for (int j = 0; j < this.hoWeights[0].Length; ++j)
-                    result[k++] = this.hoWeights[i][j];
-            for (int i = 0; i < this.oBiases.Length; ++i)
-                result[k++] = this.oBiases[i];
+            for (int i = 0; i < this.weights[1].Length; ++i)
+                for (int j = 0; j < this.weights[1][0].Length; ++j)
+                    result[k++] = this.weights[1][i][j];
+            for (int i = 0; i < this.biases[1].Length; ++i)
+                result[k++] = this.biases[1][i];
+            for (int i = 0; i < this.weights[2].Length; ++i)
+                for (int j = 0; j < this.weights[2][0].Length; ++j)
+                    result[k++] = this.weights[2][i][j];
+            for (int i = 0; i < this.biases[2].Length; ++i)
+                result[k++] = this.biases[2][i];
             return result;
         }
 
         public double[] ComputeOutputs(double[] xValues)
         {
-            double[] hSums = new double[this.numHidden]; // hidden nodes sums scratch array
-            double[] oSums = new double[this.numOutput]; // output nodes sums
+            double[] hSums = new double[this.sizes[1]]; // hidden nodes sums scratch array
+            double[] oSums = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // output nodes sums
 
             for (int i = 0; i < xValues.Length; ++i) // copy x-values to inputs
-                this.inputs[i] = xValues[i];
+                this.values[0][i] = xValues[i];
             // note: no need to copy x-values unless you implement a ToString and want to see them.
             // more efficient is to simply use the xValues[] directly.
 
-            for (int j = 0; j < this.numHidden; ++j)  // compute i-h sum of weights * inputs
-                for (int i = 0; i < this.numInput; ++i)
-                    hSums[j] += this.inputs[i] * this.ihWeights[i][j]; // note +=
+            for (int j = 0; j < this.sizes[1]; ++j)  // compute i-h sum of weights * inputs
+                for (int i = 0; i < this.sizes[0]; ++i)
+                    hSums[j] += this.values[0][i] * this.weights[1][i][j]; // note +=
 
-            for (int i = 0; i < this.numHidden; ++i)  // add biases to input-to-hidden sums
-                hSums[i] += this.hBiases[i];
+            for (int i = 0; i < this.sizes[1]; ++i)  // add biases to input-to-hidden sums
+                hSums[i] += this.biases[1][i];
 
-            for (int i = 0; i < this.numHidden; ++i)   // apply activation
-                this.hOutputs[i] = HyperTan(hSums[i]); // hard-coded
+            for (int i = 0; i < this.sizes[1]; ++i)   // apply activation
+                this.values[1][i] = HyperTan(hSums[i]); // hard-coded
 
-            for (int j = 0; j < this.numOutput; ++j)   // compute h-o sum of weights * this.hOutputs
-                for (int i = 0; i < this.numHidden; ++i)
-                    oSums[j] += this.hOutputs[i] * this.hoWeights[i][j];
+            for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)   // compute h-o sum of weights * this.values[1]
+                for (int i = 0; i < this.sizes[1]; ++i)
+                    oSums[j] += this.values[1][i] * this.weights[2][i][j];
 
-            for (int i = 0; i < this.numOutput; ++i)  // add biases to input-to-hidden sums
-                oSums[i] += this.oBiases[i];
+            for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)  // add biases to input-to-hidden sums
+                oSums[i] += this.biases[2][i];
 
-            double[] softOut = Softmax(oSums); // softmax activation does all this.outputs at once for efficiency
-            Array.Copy(softOut, this.outputs, softOut.Length);
+            double[] softOut = Softmax(oSums); // softmax activation does all this.values[NeuralNetwork.layer_count-1] at once for efficiency
+            Array.Copy(softOut, this.values[NeuralNetwork.layer_count - 1], softOut.Length);
 
-            double[] retResult = new double[this.numOutput]; // could define a GetOutputs method instead
-            Array.Copy(this.outputs, retResult, retResult.Length);
+            double[] retResult = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // could define a GetOutputs method instead
+            Array.Copy(this.values[NeuralNetwork.layer_count - 1], retResult, retResult.Length);
             return retResult;
         }
 
@@ -564,14 +554,14 @@ namespace ResilientBackProp
             // percentage correct using winner-takes all
             int numCorrect = 0;
             int numWrong = 0;
-            double[] xValues = new double[this.numInput]; // inputs
-            double[] tValues = new double[this.numOutput]; // targets
+            double[] xValues = new double[this.sizes[0]]; // inputs
+            double[] tValues = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // targets
             double[] yValues; // computed Y
 
             for (int i = 0; i < testData.Length; ++i)
             {
-                Array.Copy(testData[i], xValues, this.numInput); // parse data into x-values and t-values
-                Array.Copy(testData[i], this.numInput, tValues, 0, this.numOutput);
+                Array.Copy(testData[i], xValues, this.sizes[0]); // parse data into x-values and t-values
+                Array.Copy(testData[i], this.sizes[0], tValues, 0, this.sizes[NeuralNetwork.layer_count - 1]);
                 yValues = this.ComputeOutputs(xValues);
                 int maxIndex = MaxIndex(yValues); // which cell in yValues has largest value?
 
@@ -587,14 +577,14 @@ namespace ResilientBackProp
         {
             this.SetWeights(weights); // copy the weights to evaluate in
 
-            double[] xValues = new double[this.numInput]; // this.inputs
-            double[] tValues = new double[this.numOutput]; // targets
+            double[] xValues = new double[this.sizes[0]]; // this.values[0]
+            double[] tValues = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // targets
             double sumSquaredError = 0.0;
             for (int i = 0; i < trainData.Length; ++i) // walk through each training data item
             {
                 // following assumes data has all x-values first, followed by y-values!
-                Array.Copy(trainData[i], xValues, this.numInput); // extract inputs
-                Array.Copy(trainData[i], this.numInput, tValues, 0, this.numOutput); // extract targets
+                Array.Copy(trainData[i], xValues, this.sizes[0]); // extract inputs
+                Array.Copy(trainData[i], this.sizes[0], tValues, 0, this.sizes[NeuralNetwork.layer_count - 1]); // extract targets
                 double[] yValues = this.ComputeOutputs(xValues);
                 for (int j = 0; j < yValues.Length; ++j)
                     sumSquaredError += ((yValues[j] - tValues[j]) * (yValues[j] - tValues[j]));
