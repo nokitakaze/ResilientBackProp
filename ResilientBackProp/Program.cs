@@ -5,6 +5,8 @@
 // Proceedings of the 1993 IEEE International Conference on Neural Networks,
 // pp. 586-591
 // This is the orginal version of the algorithm. There are many later variations.
+// (c) Dr. James McCaffrey
+//
 
 namespace ResilientBackProp
 {
