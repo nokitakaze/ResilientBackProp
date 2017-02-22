@@ -18,18 +18,17 @@ namespace ResilientBackProp
             int numHidden = 5;
             int numOutput = 3; // number of classes for Y
             int numRows = 10000;
-            int seed = 0;
 
             Console.WriteLine("\nGenerating " + numRows +
               " artificial data items with " + numInput + " features");
             double[][] allData = MakeAllData(numInput, numHidden, numOutput,
-              numRows, seed);
+              numRows);
             Console.WriteLine("Done");
 
             Console.WriteLine("\nCreating train (80%) and test (20%) matrices");
             double[][] trainData;
             double[][] testData;
-            MakeTrainTest(allData, 0.80, seed, out trainData, out testData);
+            MakeTrainTest(allData, 0.80, out trainData, out testData);
             Console.WriteLine("Done");
 
             Console.WriteLine("\nTraining data: \n");
@@ -63,9 +62,9 @@ namespace ResilientBackProp
         } // Main
 
         static double[][] MakeAllData(int numInput, int numHidden, int numOutput,
-          int numRows, int seed)
+          int numRows)
         {
-            Random rnd = new Random(seed);
+            Random rnd = new Random();
             int numWeights = (numInput * numHidden) + numHidden +
               (numHidden * numOutput) + numOutput;
             double[] weights = new double[numWeights]; // actually weights & biases
@@ -116,10 +115,10 @@ namespace ResilientBackProp
             return result;
         } // MakeAllData
 
-        static void MakeTrainTest(double[][] allData, double trainPct, int seed,
+        static void MakeTrainTest(double[][] allData, double trainPct,
           out double[][] trainData, out double[][] testData)
         {
-            Random rnd = new Random(seed);
+            Random rnd = new Random();
             int totRows = allData.Length;
             int numTrainRows = (int)(totRows * trainPct); // usually 0.80
             int numTestRows = totRows - numTrainRows;
