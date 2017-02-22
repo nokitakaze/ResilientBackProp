@@ -192,7 +192,7 @@ namespace ResilientBackProp
     public class NeuralNetwork
     {
         private Random rnd;
-        const int layer_count = 3;
+        private int layer_count = 3;
         int[] sizes;
 
         private double[][] layers;
@@ -204,15 +204,15 @@ namespace ResilientBackProp
             this.sizes = new int[layer_count];
             this.sizes[0] = numInput;
             this.sizes[1] = numHidden;
-            this.sizes[NeuralNetwork.layer_count - 1] = numOutput;
+            this.sizes[2] = numOutput;
             this.layers = new double[layer_count][];
             this.biases = new double[layer_count][];
             this.weights = new double[layer_count][][];
-            for (int i = 0; i < NeuralNetwork.layer_count; i++)
+            for (int i = 0; i < this.layer_count; i++)
             {
                 this.layers[i] = new double[this.sizes[i]];
             }
-            for (int i = 1; i < NeuralNetwork.layer_count; i++)
+            for (int i = 1; i < this.layer_count; i++)
             {
                 this.biases[i] = new double[this.sizes[i]];
                 this.weights[i] = MakeMatrix(this.sizes[i - 1], this.sizes[i], 0.0);
@@ -246,8 +246,8 @@ namespace ResilientBackProp
         {
             // initialize weights and biases to random values between 0.0001 and 0.001
             int numWeights = (this.sizes[0] * this.sizes[1]) +
-                (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) +
-                this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
+                (this.sizes[1] * this.sizes[2]) +
+                this.sizes[1] + this.sizes[2];
             double[] initialWeights = new double[numWeights];
             // @todo Переписать, веса надо нормализировать
             for (int i = 0; i < initialWeights.Length; ++i)
@@ -260,24 +260,30 @@ namespace ResilientBackProp
         public double[] TrainRPROP(double[][] trainData, int maxEpochs) // using RPROP
         {
             // there is an accumulated gradient and a previous gradient for each weight and bias
-            double[] hGradTerms = new double[this.sizes[1]]; // intermediate val for h-o weight gradients
-            double[] oGradTerms = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // output gradients
+            double[][] GradTerms = new double[this.layer_count][];
+            double[][] BiasGradsAcc = new double[this.layer_count][];
+            double[][] PrevBiasGradsAcc = new double[this.layer_count][];
+            double[][] PrevBiasDeltas = new double[this.layer_count][];
 
-            double[][] hoWeightGradsAcc = MakeMatrix(this.sizes[1], this.sizes[NeuralNetwork.layer_count - 1], 0.0); // accumulated over all training data
-            double[][] ihWeightGradsAcc = MakeMatrix(this.sizes[0], this.sizes[1], 0.0);
-            double[] oBiasGradsAcc = new double[this.sizes[NeuralNetwork.layer_count - 1]];
-            double[] hBiasGradsAcc = new double[this.sizes[1]];
+            double[][][] WeightGradsAcc = new double[this.layer_count][][];
+            double[][][] PrevWeightGradsAcc = new double[this.layer_count][][];
+            double[][][] PrevWeightDeltas = new double[this.layer_count][][];
+            for (int i = 1; i < this.layer_count; i++)
+            {
+                GradTerms[i] = new double[this.sizes[i]];
+                BiasGradsAcc[i] = new double[this.sizes[i]];
+                PrevBiasGradsAcc[i] = new double[this.sizes[i]];
+                PrevBiasDeltas[i] = MakeVector(this.sizes[i], 0.01);
 
-            double[][] hoPrevWeightGradsAcc = MakeMatrix(this.sizes[1], this.sizes[NeuralNetwork.layer_count - 1], 0.0); // accumulated, previous iteration
-            double[][] ihPrevWeightGradsAcc = MakeMatrix(this.sizes[0], this.sizes[1], 0.0);
-            double[] oPrevBiasGradsAcc = new double[this.sizes[NeuralNetwork.layer_count - 1]];
-            double[] hPrevBiasGradsAcc = new double[this.sizes[1]];
+                // accumulated over all training data
+                WeightGradsAcc[i] = MakeMatrix(this.sizes[i - 1], this.sizes[i], 0.0);
 
-            // must save previous weight deltas
-            double[][] hoPrevWeightDeltas = MakeMatrix(this.sizes[1], this.sizes[NeuralNetwork.layer_count - 1], 0.01);
-            double[][] ihPrevWeightDeltas = MakeMatrix(this.sizes[0], this.sizes[1], 0.01);
-            double[] oPrevBiasDeltas = MakeVector(this.sizes[NeuralNetwork.layer_count - 1], 0.01);
-            double[] hPrevBiasDeltas = MakeVector(this.sizes[1], 0.01);
+                // accumulated, previous iteration
+                PrevWeightGradsAcc[i] = MakeMatrix(this.sizes[i - 1], this.sizes[i], 0.0);
+
+                // must save previous weight deltas
+                PrevWeightDeltas[i] = MakeMatrix(this.sizes[i - 1], this.sizes[i], 0.01);
+            }
 
             double etaPlus = 1.2; // values are from the paper
             double etaMinus = 0.5;
@@ -297,26 +303,28 @@ namespace ResilientBackProp
                 }
 
                 // 1. compute and accumulate all gradients
-                ZeroOut(hoWeightGradsAcc); // zero-out values from prev iteration
-                ZeroOut(ihWeightGradsAcc);
-                ZeroOut(oBiasGradsAcc);
-                ZeroOut(hBiasGradsAcc);
+                for (int layer = 1; layer < this.layer_count; layer++)
+                {
+                    // zero-out values from prev iteration
+                    ZeroOut(WeightGradsAcc[layer]);
+                    ZeroOut(BiasGradsAcc[layer]);
+                }
 
                 double[] xValues = new double[this.sizes[0]]; // inputs
-                double[] tValues = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // target values
+                double[] tValues = new double[this.sizes[2]]; // target values
                 for (int row = 0; row < trainData.Length; ++row)  // walk thru all training data
                 {
                     // no need to visit in random order because all rows processed before any updates ('batch')
                     Array.Copy(trainData[row], xValues, this.sizes[0]); // get the inputs
-                    Array.Copy(trainData[row], this.sizes[0], tValues, 0, this.sizes[NeuralNetwork.layer_count - 1]); // get the target values
+                    Array.Copy(trainData[row], this.sizes[0], tValues, 0, this.sizes[2]); // get the target values
                     ComputeOutputs(xValues); // copy xValues in, compute outputs using curr weights (and store outputs internally)
 
                     // compute the h-o gradient term/component as in regular back-prop
                     // this term usually is lower case Greek delta but there are too many other deltas below
-                    for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
+                    for (int i = 0; i < this.sizes[2]; ++i)
                     {
                         double derivative = (1 - this.layers[2][i]) * this.layers[2][i]; // derivative of softmax = (1 - y) * y (same as log-sigmoid)
-                        oGradTerms[i] = derivative * (this.layers[2][i] - tValues[i]); // careful with O-T vs. T-O, O-T is the most usual
+                        GradTerms[2][i] = derivative * (this.layers[2][i] - tValues[i]); // careful with O-T vs. T-O, O-T is the most usual
                     }
 
                     // compute the i-h gradient term/component as in regular back-prop
@@ -324,46 +332,32 @@ namespace ResilientBackProp
                     {
                         double derivative = (1 - this.layers[1][i]) * (1 + this.layers[1][i]); // derivative of tanh = (1 - y) * (1 + y)
                         double sum = 0.0;
-                        for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j) // each hidden delta is the sum of this.sizes[NeuralNetwork.layer_count - 1] terms
+                        for (int j = 0; j < this.sizes[2]; ++j) // each hidden delta is the sum of this.sizes[2] terms
                         {
-                            double x = oGradTerms[j] * this.weights[2][i][j];
+                            double x = GradTerms[2][j] * this.weights[2][i][j];
                             sum += x;
                         }
-                        hGradTerms[i] = derivative * sum;
+                        GradTerms[1][i] = derivative * sum;
                     }
 
-                    // add input to h-o component to make h-o weight gradients, and accumulate
-                    for (int i = 0; i < this.sizes[1]; ++i)
+                    for (int layer = this.layer_count - 1; layer > 0; layer--)
                     {
-                        for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)
+                        // add input to h-o component to make h-o weight gradients, and accumulate
+                        for (int i = 0; i < this.sizes[layer - 1]; ++i)
                         {
-                            double grad = oGradTerms[j] * this.layers[1][i];
-                            hoWeightGradsAcc[i][j] += grad;
+                            for (int j = 0; j < this.sizes[layer]; ++j)
+                            {
+                                double grad = GradTerms[layer][j] * this.layers[layer - 1][i];
+                                WeightGradsAcc[layer][i][j] += grad;
+                            }
                         }
-                    }
 
-                    // the (hidden-to-) output bias gradients
-                    for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
-                    {
-                        double grad = oGradTerms[i] * 1.0; // dummy input
-                        oBiasGradsAcc[i] += grad;
-                    }
-
-                    // add input term to i-h component to make i-h weight gradients and accumulate
-                    for (int i = 0; i < this.sizes[0]; ++i)
-                    {
-                        for (int j = 0; j < this.sizes[1]; ++j)
+                        // the (hidden-to-) output bias gradients
+                        for (int i = 0; i < this.sizes[layer]; ++i)
                         {
-                            double grad = hGradTerms[j] * this.layers[0][i];
-                            ihWeightGradsAcc[i][j] += grad;
+                            double grad = GradTerms[layer][i] * 1.0; // dummy input
+                            BiasGradsAcc[layer][i] += grad;
                         }
-                    }
-
-                    // the (input-to-) hidden bias gradient
-                    for (int i = 0; i < this.sizes[1]; ++i)
-                    {
-                        double grad = hGradTerms[i] * 1.0;
-                        hBiasGradsAcc[i] += grad;
                     }
                 } // each row
                   // end compute all gradients
@@ -371,128 +365,72 @@ namespace ResilientBackProp
                 // update all weights and biases (in any order)
 
                 // update input-hidden weights
-                double delta = 0.0;
-
-                for (int i = 0; i < this.sizes[0]; ++i)
+                for (int layer = 1; layer < this.layer_count; layer++)
                 {
-                    for (int j = 0; j < this.sizes[1]; ++j)
+                    for (int i = 0; i < this.sizes[layer - 1]; ++i)
                     {
-                        if (ihPrevWeightGradsAcc[i][j] * ihWeightGradsAcc[i][j] > 0) // no sign change, increase delta
+                        for (int j = 0; j < this.sizes[layer]; ++j)
                         {
-                            delta = ihPrevWeightDeltas[i][j] * etaPlus; // compute delta
-                            if (delta > deltaMax) delta = deltaMax; // keep it in range
-                            double tmp = -Math.Sign(ihWeightGradsAcc[i][j]) * delta; // determine direction and magnitude
-                            this.weights[1][i][j] += tmp; // update weights
-                        }
-                        else if (ihPrevWeightGradsAcc[i][j] * ihWeightGradsAcc[i][j] < 0) // grad changed sign, decrease delta
+                            double delta;
+                            if (PrevWeightGradsAcc[layer][i][j] * WeightGradsAcc[layer][i][j] > 0) // no sign change, increase delta
+                            {
+                                delta = PrevWeightDeltas[layer][i][j] * etaPlus; // compute delta
+                                if (delta > deltaMax) delta = deltaMax; // keep it in range
+                                double tmp = -Math.Sign(WeightGradsAcc[layer][i][j]) * delta; // determine direction and magnitude
+                                this.weights[layer][i][j] += tmp; // update weights
+                            }
+                            else if (PrevWeightGradsAcc[layer][i][j] * WeightGradsAcc[layer][i][j] < 0) // grad changed sign, decrease delta
+                            {
+                                delta = PrevWeightDeltas[layer][i][j] * etaMinus; // the delta (not used, but saved for later)
+                                if (delta < deltaMin) delta = deltaMin; // keep it in range
+                                this.weights[layer][i][j] -= PrevWeightDeltas[layer][i][j]; // revert to previous weight
+                                WeightGradsAcc[layer][i][j] = 0; // forces next if-then branch, next iteration
+                            }
+                            else // this happens next iteration after 2nd branch above (just had a change in gradient)
+                            {
+                                delta = PrevWeightDeltas[layer][i][j]; // no change to delta
+                                                                       // no way should delta be 0 . . . 
+                                double tmp = -Math.Sign(WeightGradsAcc[layer][i][j]) * delta; // determine direction
+                                this.weights[layer][i][j] += tmp; // update
+                            }
+                            //Console.WriteLine(PrevWeightGradsAcc[1][i][j] + " " + WeightGradsAcc[1][i][j]); Console.ReadLine();
+
+                            PrevWeightDeltas[layer][i][j] = delta; // save delta
+                            PrevWeightGradsAcc[layer][i][j] = WeightGradsAcc[layer][i][j]; // save the (accumulated) gradient
+                        } // j
+                    } // i
+
+                    // update (input-to-) hidden biases
+                    for (int i = 0; i < this.sizes[layer]; ++i)
+                    {
+                        double delta;
+                        if (PrevBiasGradsAcc[layer][i] * BiasGradsAcc[layer][i] > 0) // no sign change, increase delta
                         {
-                            delta = ihPrevWeightDeltas[i][j] * etaMinus; // the delta (not used, but saved for later)
-                            if (delta < deltaMin) delta = deltaMin; // keep it in range
-                            this.weights[1][i][j] -= ihPrevWeightDeltas[i][j]; // revert to previous weight
-                            ihWeightGradsAcc[i][j] = 0; // forces next if-then branch, next iteration
-                        }
-                        else // this happens next iteration after 2nd branch above (just had a change in gradient)
-                        {
-                            delta = ihPrevWeightDeltas[i][j]; // no change to delta
-                                                              // no way should delta be 0 . . . 
-                            double tmp = -Math.Sign(ihWeightGradsAcc[i][j]) * delta; // determine direction
-                            this.weights[1][i][j] += tmp; // update
-                        }
-                        //Console.WriteLine(ihPrevWeightGradsAcc[i][j] + " " + ihWeightGradsAcc[i][j]); Console.ReadLine();
-
-                        ihPrevWeightDeltas[i][j] = delta; // save delta
-                        ihPrevWeightGradsAcc[i][j] = ihWeightGradsAcc[i][j]; // save the (accumulated) gradient
-                    } // j
-                } // i
-
-                // update (input-to-) hidden biases
-                for (int i = 0; i < this.sizes[1]; ++i)
-                {
-                    if (hPrevBiasGradsAcc[i] * hBiasGradsAcc[i] > 0) // no sign change, increase delta
-                    {
-                        delta = hPrevBiasDeltas[i] * etaPlus; // compute delta
-                        if (delta > deltaMax) delta = deltaMax;
-                        double tmp = -Math.Sign(hBiasGradsAcc[i]) * delta; // determine direction
-                        this.biases[1][i] += tmp; // update
-                    }
-                    else if (hPrevBiasGradsAcc[i] * hBiasGradsAcc[i] < 0) // grad changed sign, decrease delta
-                    {
-                        delta = hPrevBiasDeltas[i] * etaMinus; // the delta (not used, but saved later)
-                        if (delta < deltaMin) delta = deltaMin;
-                        this.biases[1][i] -= hPrevBiasDeltas[i]; // revert to previous weight
-                        hBiasGradsAcc[i] = 0; // forces next branch, next iteration
-                    }
-                    else // this happens next iteration after 2nd branch above (just had a change in gradient)
-                    {
-                        delta = hPrevBiasDeltas[i]; // no change to delta
-
-                        if (delta > deltaMax) delta = deltaMax;
-                        else if (delta < deltaMin) delta = deltaMin;
-                        // no way should delta be 0 . . . 
-                        double tmp = -Math.Sign(hBiasGradsAcc[i]) * delta; // determine direction
-                        this.biases[1][i] += tmp; // update
-                    }
-                    hPrevBiasDeltas[i] = delta;
-                    hPrevBiasGradsAcc[i] = hBiasGradsAcc[i];
-                }
-
-                // update hidden-to-output weights
-                for (int i = 0; i < this.sizes[1]; ++i)
-                {
-                    for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)
-                    {
-                        if (hoPrevWeightGradsAcc[i][j] * hoWeightGradsAcc[i][j] > 0) // no sign change, increase delta
-                        {
-                            delta = hoPrevWeightDeltas[i][j] * etaPlus; // compute delta
+                            delta = PrevBiasDeltas[layer][i] * etaPlus; // compute delta
                             if (delta > deltaMax) delta = deltaMax;
-                            double tmp = -Math.Sign(hoWeightGradsAcc[i][j]) * delta; // determine direction
-                            this.weights[2][i][j] += tmp; // update
+                            double tmp = -Math.Sign(BiasGradsAcc[layer][i]) * delta; // determine direction
+                            this.biases[layer][i] += tmp; // update
                         }
-                        else if (hoPrevWeightGradsAcc[i][j] * hoWeightGradsAcc[i][j] < 0) // grad changed sign, decrease delta
+                        else if (PrevBiasGradsAcc[1][i] * BiasGradsAcc[layer][i] < 0) // grad changed sign, decrease delta
                         {
-                            delta = hoPrevWeightDeltas[i][j] * etaMinus; // the delta (not used, but saved later)
+                            delta = PrevBiasDeltas[1][i] * etaMinus; // the delta (not used, but saved later)
                             if (delta < deltaMin) delta = deltaMin;
-                            this.weights[2][i][j] -= hoPrevWeightDeltas[i][j]; // revert to previous weight
-                            hoWeightGradsAcc[i][j] = 0; // forces next branch, next iteration
+                            this.biases[layer][i] -= PrevBiasDeltas[layer][i]; // revert to previous weight
+                            BiasGradsAcc[layer][i] = 0; // forces next branch, next iteration
                         }
                         else // this happens next iteration after 2nd branch above (just had a change in gradient)
                         {
-                            delta = hoPrevWeightDeltas[i][j]; // no change to delta
-                                                              // no way should delta be 0 . . . 
-                            double tmp = -Math.Sign(hoWeightGradsAcc[i][j]) * delta; // determine direction
-                            this.weights[2][i][j] += tmp; // update
-                        }
-                        hoPrevWeightDeltas[i][j] = delta; // save delta
-                        hoPrevWeightGradsAcc[i][j] = hoWeightGradsAcc[i][j]; // save the (accumulated) gradients
-                    } // j
-                } // i
+                            delta = PrevBiasDeltas[layer][i]; // no change to delta
 
-                // update (hidden-to-) output biases
-                for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
-                {
-                    if (oPrevBiasGradsAcc[i] * oBiasGradsAcc[i] > 0) // no sign change, increase delta
-                    {
-                        delta = oPrevBiasDeltas[i] * etaPlus; // compute delta
-                        if (delta > deltaMax) delta = deltaMax;
-                        double tmp = -Math.Sign(oBiasGradsAcc[i]) * delta; // determine direction
-                        this.biases[2][i] += tmp; // update
+                            if (delta > deltaMax) delta = deltaMax;
+                            else if (delta < deltaMin) delta = deltaMin;
+                            // no way should delta be 0 . . . 
+                            double tmp = -Math.Sign(BiasGradsAcc[layer][i]) * delta; // determine direction
+                            this.biases[layer][i] += tmp; // update
+                        }
+                        PrevBiasDeltas[layer][i] = delta;
+                        PrevBiasGradsAcc[layer][i] = BiasGradsAcc[layer][i];
                     }
-                    else if (oPrevBiasGradsAcc[i] * oBiasGradsAcc[i] < 0) // grad changed sign, decrease delta
-                    {
-                        delta = oPrevBiasDeltas[i] * etaMinus; // the delta (not used, but saved later)
-                        if (delta < deltaMin) delta = deltaMin;
-                        this.biases[2][i] -= oPrevBiasDeltas[i]; // revert to previous weight
-                        oBiasGradsAcc[i] = 0; // forces next branch, next iteration
-                    }
-                    else // this happens next iteration after 2nd branch above (just had a change in gradient)
-                    {
-                        delta = oPrevBiasDeltas[i]; // no change to delta
-                                                    // no way should delta be 0 . . . 
-                        double tmp = -Math.Sign(hBiasGradsAcc[i]) * delta; // determine direction
-                        this.biases[2][i] += tmp; // update
-                    }
-                    oPrevBiasDeltas[i] = delta;
-                    oPrevBiasGradsAcc[i] = oBiasGradsAcc[i];
                 }
             } // while
 
@@ -515,8 +453,10 @@ namespace ResilientBackProp
 
         public void SetWeights(double[] weights)
         {
+            // @todo переписать на layer_count
             // copy weights and biases in weights[] array to i-h weights, i-h biases, h-o weights, h-o biases
-            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
+            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[2]) +
+                this.sizes[1] + this.sizes[2];
             if (weights.Length != numWeights)
                 throw new Exception("Bad weights array in SetWeights");
 
@@ -528,15 +468,17 @@ namespace ResilientBackProp
             for (int i = 0; i < this.sizes[1]; ++i)
                 this.biases[1][i] = weights[k++];
             for (int i = 0; i < this.sizes[1]; ++i)
-                for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)
+                for (int j = 0; j < this.sizes[2]; ++j)
                     this.weights[2][i][j] = weights[k++];
-            for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)
+            for (int i = 0; i < this.sizes[2]; ++i)
                 this.biases[2][i] = weights[k++];
         }
 
         public double[] GetWeights()
         {
-            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[NeuralNetwork.layer_count - 1]) + this.sizes[1] + this.sizes[NeuralNetwork.layer_count - 1];
+            // @todo переписать на layer_count
+            int numWeights = (this.sizes[0] * this.sizes[1]) + (this.sizes[1] * this.sizes[2]) +
+                this.sizes[1] + this.sizes[2];
             double[] result = new double[numWeights];
             int k = 0;
             for (int i = 0; i < this.weights[1].Length; ++i)
@@ -554,36 +496,36 @@ namespace ResilientBackProp
 
         public double[] ComputeOutputs(double[] xValues)
         {
-            double[] hSums = new double[this.sizes[1]]; // hidden nodes sums scratch array
-            double[] oSums = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // output nodes sums
+            this.layers[0] = xValues;
+            for (int layer = 1; layer < this.layer_count; layer++)
+            {
+                this.layers[layer] = new double[this.sizes[layer]];
+                Array.Copy(this.biases[layer], this.layers[layer], this.sizes[layer]);
 
-            for (int i = 0; i < xValues.Length; ++i) // copy x-values to inputs
-                this.layers[0][i] = xValues[i];
-            // note: no need to copy x-values unless you implement a ToString and want to see them.
-            // more efficient is to simply use the xValues[] directly.
+                for (int j = 0; j < this.sizes[layer]; ++j)  // compute i-h sum of weights * inputs
+                {
+                    for (int i = 0; i < this.sizes[layer - 1]; ++i)
+                    {
+                        this.layers[layer][j] += this.layers[layer - 1][i] * this.weights[layer][i][j]; // note +=
+                    }
+                }
 
-            for (int j = 0; j < this.sizes[1]; ++j)  // compute i-h sum of weights * inputs
-                for (int i = 0; i < this.sizes[0]; ++i)
-                    hSums[j] += this.layers[0][i] * this.weights[1][i][j]; // note +=
+                if (layer < this.layer_count - 1)
+                {
+                    for (int i = 0; i < this.sizes[1]; ++i)   // apply activation
+                    {
+                        this.layers[layer][i] = HyperTan(this.layers[layer][i]); // hard-coded
+                    }
+                }
+                else
+                {
+                    double[] softOut = Softmax(this.layers[layer]); // softmax activation does all outputs at once for efficiency
+                    Array.Copy(softOut, this.layers[layer], softOut.Length);
+                }
+            }
 
-            for (int i = 0; i < this.sizes[1]; ++i)  // add biases to input-to-hidden sums
-                hSums[i] += this.biases[1][i];
-
-            for (int i = 0; i < this.sizes[1]; ++i)   // apply activation
-                this.layers[1][i] = HyperTan(hSums[i]); // hard-coded
-
-            for (int j = 0; j < this.sizes[NeuralNetwork.layer_count - 1]; ++j)   // compute h-o sum of weights * hOutputs
-                for (int i = 0; i < this.sizes[1]; ++i)
-                    oSums[j] += this.layers[1][i] * this.weights[2][i][j];
-
-            for (int i = 0; i < this.sizes[NeuralNetwork.layer_count - 1]; ++i)  // add biases to input-to-hidden sums
-                oSums[i] += this.biases[2][i];
-
-            double[] softOut = Softmax(oSums); // softmax activation does all outputs at once for efficiency
-            Array.Copy(softOut, this.layers[2], softOut.Length);
-
-            double[] retResult = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // could define a GetOutputs method instead
-            Array.Copy(this.layers[2], retResult, retResult.Length);
+            double[] retResult = new double[this.sizes[this.layer_count - 1]]; // could define a GetOutputs method instead
+            Array.Copy(this.layers[this.layer_count - 1], retResult, retResult.Length);
             return retResult;
         }
 
@@ -616,18 +558,19 @@ namespace ResilientBackProp
 
         public double Accuracy(double[][] testData, double[] weights)
         {
+            // @todo переписать на layer_count
             this.SetWeights(weights);
             // percentage correct using winner-takes all
             int numCorrect = 0;
             int numWrong = 0;
             double[] xValues = new double[this.sizes[0]]; // inputs
-            double[] tValues = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // targets
+            double[] tValues = new double[this.sizes[2]]; // targets
             double[] yValues; // computed Y
 
             for (int i = 0; i < testData.Length; ++i)
             {
                 Array.Copy(testData[i], xValues, this.sizes[0]); // parse data into x-values and t-values
-                Array.Copy(testData[i], this.sizes[0], tValues, 0, this.sizes[NeuralNetwork.layer_count - 1]);
+                Array.Copy(testData[i], this.sizes[0], tValues, 0, this.sizes[2]);
                 yValues = this.ComputeOutputs(xValues);
                 int maxIndex = MaxIndex(yValues); // which cell in yValues has largest value?
 
@@ -641,16 +584,17 @@ namespace ResilientBackProp
 
         public double MeanSquaredError(double[][] trainData, double[] weights)
         {
+            // @todo переписать на layer_count
             this.SetWeights(weights); // copy the weights to evaluate in
 
             double[] xValues = new double[this.sizes[0]]; // inputs
-            double[] tValues = new double[this.sizes[NeuralNetwork.layer_count - 1]]; // targets
+            double[] tValues = new double[this.sizes[2]]; // targets
             double sumSquaredError = 0.0;
             for (int i = 0; i < trainData.Length; ++i) // walk through each training data item
             {
                 // following assumes data has all x-values first, followed by y-values!
                 Array.Copy(trainData[i], xValues, this.sizes[0]); // extract inputs
-                Array.Copy(trainData[i], this.sizes[0], tValues, 0, this.sizes[NeuralNetwork.layer_count - 1]); // extract targets
+                Array.Copy(trainData[i], this.sizes[0], tValues, 0, this.sizes[2]); // extract targets
                 double[] yValues = this.ComputeOutputs(xValues);
                 for (int j = 0; j < yValues.Length; ++j)
                     sumSquaredError += ((yValues[j] - tValues[j]) * (yValues[j] - tValues[j]));
