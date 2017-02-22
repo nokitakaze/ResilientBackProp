@@ -21,8 +21,7 @@ namespace ResilientBackProp
 
             Console.WriteLine("\nGenerating " + numRows +
               " artificial data items with " + numInput + " features");
-            double[][] allData = MakeAllData(numInput, numHidden, numOutput,
-              numRows);
+            double[][] allData = MakeAllData(numInput, numHidden, numOutput, numRows);
             Console.WriteLine("Done");
 
             Console.WriteLine("\nCreating train (80%) and test (20%) matrices");
