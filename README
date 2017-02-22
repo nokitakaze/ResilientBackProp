@@ -1,0 +1,5 @@
+See "A Direct Adaptive Method for Faster Backpropagation Learning: The RPROP Algorithm",
+M. Riedmiller and H. Braun,
+Proceedings of the 1993 IEEE International Conference on Neural Networks,
+pp. 586-591
+This is the orginal version of the algorithm. There are many later variations.
