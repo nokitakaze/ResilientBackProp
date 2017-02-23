@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 
 // See "A Direct Adaptive Method for Faster Backpropagation Learning: The RPROP Algorithm",
 // M. Riedmiller and H. Braun,
@@ -38,12 +39,14 @@ namespace ResilientBackProp
 
             Console.WriteLine("Creating a 4-5-3 neural network");
             NeuralNetwork nn = new NeuralNetwork(numInput, numHidden, numOutput);
+            nn.save("before_test.dat");
 
             int maxEpochs = 1000;
             Console.WriteLine("\nSetting maxEpochs = " + maxEpochs);
 
             Console.WriteLine("\nStarting RPROP training");
             double[] weights = nn.TrainRPROP(trainData, maxEpochs); // RPROP
+            nn.save("after_test.dat");
             Console.WriteLine("Done");
             Console.WriteLine("\nFinal neural network model weights:\n");
             ShowVector(weights, 4, 10, true);
@@ -60,6 +63,9 @@ namespace ResilientBackProp
             Console.ReadLine();
         } // Main
 
+        /**
+         * Generate synthetic data
+         */
         static double[][] MakeAllData(int numInput, int numHidden, int numOutput,
           int numRows)
         {
@@ -114,6 +120,9 @@ namespace ResilientBackProp
             return result;
         } // MakeAllData
 
+        /**
+         * Put synthetic data to train and test
+         */
         static void MakeTrainTest(double[][] allData, double trainPct,
           out double[][] trainData, out double[][] testData)
         {
@@ -197,6 +206,11 @@ namespace ResilientBackProp
         private double[][] layers;
         private double[][] biases;
         private double[][][] weights;
+
+        const double etaPlus = 1.2; // values are from the paper
+        const double etaMinus = 0.5;
+        const double deltaMax = 50.0;
+        const double deltaMin = 1.0E-6;
 
         public NeuralNetwork(int numInput, int numHidden, int numOutput)
         {
@@ -283,11 +297,6 @@ namespace ResilientBackProp
                 // must save previous weight deltas
                 PrevWeightDeltas[i] = MakeMatrix(this.sizes[i - 1], this.sizes[i], 0.01);
             }
-
-            double etaPlus = 1.2; // values are from the paper
-            double etaMinus = 0.5;
-            double deltaMax = 50.0;
-            double deltaMin = 1.0E-6;
 
             int epoch = 0;
             while (epoch < maxEpochs)
@@ -617,6 +626,34 @@ namespace ResilientBackProp
             return bigIndex;
         }
 
+        public void save(string filename)
+        {
+            FileStream fo = File.Open(filename, FileMode.Create);
+            BinaryWriter writer = new BinaryWriter(fo);
+            writer.Write(this.layer_count);
+            for (int i = 0; i < this.layer_count; i++)
+            {
+                writer.Write(this.sizes[i]);
+            }
+            for (int layer = 1; layer < this.layer_count; layer++)
+            {
+                int size = this.sizes[layer];
+                int size_previous = this.sizes[layer - 1];
+                for (int node = 0; node < size; node++)
+                {
+                    writer.Write(this.biases[layer][node]);
+                }
+                for (int node = 0; node < size; node++)
+                {
+                    for (int prev = 0; prev < size_previous; prev++)
+                    {
+                        writer.Write(this.weights[layer][prev][node]);
+                    }
+                }
+            }
+            writer.Close();
+            fo.Close();
+        }
     } // NeuralNetwork
 
 } // ns
