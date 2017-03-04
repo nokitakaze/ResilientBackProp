@@ -39,7 +39,8 @@ namespace ResilientBackProp
             ShowData(testData, 3, 2, true);
 
             Console.WriteLine("Creating a 4-5-3 neural network");
-            NeuralNetwork nn = new NeuralNetwork(numInput, numHidden, numOutput);
+            int[] sizes = {numInput, numHidden, numOutput};
+            NeuralNetwork nn = new NeuralNetwork(sizes);
             nn.Save("before_test.dat");
 
             const int maxEpochs = 1000;
@@ -84,8 +85,8 @@ namespace ResilientBackProp
             for (int i = 0; i < numRows; ++i)
                 result[i] = new double[numInput + numOutput]; // 1-of-N Y in last column
 
-            NeuralNetwork gnn =
-                new NeuralNetwork(numInput, numHidden, numOutput); // generating NN
+            int[] sizes = {numInput, numHidden, numOutput};
+            NeuralNetwork gnn = new NeuralNetwork(sizes); // generating NN
             gnn.SetWeights(weights);
 
             for (int r = 0; r < numRows; ++r) // for each row
@@ -203,7 +204,7 @@ namespace ResilientBackProp
 
     public class NeuralNetwork : AbstractNeuralNetwork
     {
-        public NeuralNetwork(int numInput, int numHidden, int numOutput) : base(numInput, numHidden, numOutput)
+        public NeuralNetwork(IReadOnlyList<int> sizes) : base(sizes)
         {
         }
 
@@ -317,13 +318,14 @@ namespace ResilientBackProp
         public const double DeltaMax = 50.0;
         public const double DeltaMin = 1.0E-6;
 
-        protected AbstractNeuralNetwork(int numInput, int numHidden, int numOutput)
+        protected AbstractNeuralNetwork(IReadOnlyList<int> sizes)
         {
-            this.LayerCount = 3;
-            this.Sizes = new int[LayerCount];
-            this.Sizes[0] = numInput;
-            this.Sizes[1] = numHidden;
-            this.Sizes[2] = numOutput;
+            this.LayerCount = sizes.Count;
+            this.Sizes = new int[sizes.Count];
+            for (int i = 0; i < sizes.Count; i++)
+            {
+                this.Sizes[i] = sizes[i];
+            }
             this.Layers = new double[LayerCount][];
             this.Neurons = new WeightComposite[LayerCount];
             for (int i = 0; i < this.LayerCount; i++)
