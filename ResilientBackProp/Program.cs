@@ -67,7 +67,7 @@ namespace ResilientBackProp
         /**
          * Generate synthetic data
          */
-        private static double[][] MakeAllData(int numInput, int numHidden, int numOutput,
+        protected static double[][] MakeAllData(int numInput, int numHidden, int numOutput,
             int numRows)
         {
             Random rnd = new Random();
@@ -122,7 +122,7 @@ namespace ResilientBackProp
         /**
          * Put synthetic data to train and test
          */
-        private static void MakeTrainTest(double[][] allData, double trainPct,
+        protected static void MakeTrainTest(double[][] allData, double trainPct,
             out double[][] trainData, out double[][] testData)
         {
             Random rnd = new Random();
@@ -201,7 +201,101 @@ namespace ResilientBackProp
         public double[] Biases;
     }
 
-    public class NeuralNetwork
+    public class NeuralNetwork : AbstractNeuralNetwork
+    {
+        public NeuralNetwork(int numInput, int numHidden, int numOutput) : base(numInput, numHidden, numOutput)
+        {
+        }
+
+        protected override double[] ActivateFunction(IReadOnlyList<double>  rawValues, int layerId)
+        {
+            if (layerId >= this.LayerCount - 1)
+            {
+                return NeuralNetwork.Softmax(rawValues);
+            }
+
+            double[] values = new double[rawValues.Count];
+            for (int i = 0; i < rawValues.Count; i++)
+            {
+                values[i] = NeuralNetwork.HyperTan(rawValues[i]);
+            }
+
+            return values;
+        }
+
+        protected override double[][] CalculateGradTerms(double[][] rawValues,
+            IReadOnlyList<double> tValues)
+        {
+            double[][] gradTerms = new double[rawValues.Length][];
+            for (int layerId = this.LayerCount - 1; layerId > 0; layerId--)
+            {
+                gradTerms[layerId] = layerId < this.LayerCount - 1
+                    ? CalculateGradTermsForNonLast(rawValues[layerId], this.Neurons[layerId + 1].Weights,
+                        gradTerms[layerId + 1])
+                    : CalculateGradTermsForLast(rawValues[layerId], tValues);
+            }
+
+            return gradTerms;
+        }
+
+        private static double[] CalculateGradTermsForLast(IReadOnlyList<double> rawValues,
+            IReadOnlyList<double> tValues)
+        {
+            double[] gradTerms = new double[rawValues.Count];
+            for (int i = 0; i < rawValues.Count; ++i)
+            {
+                // derivative of softmax = (1 - y) * y (same as log-sigmoid)
+                double derivative = (1 - rawValues[i]) * rawValues[i];
+                // careful with O-T vs. T-O, O-T is the most usual
+                gradTerms[i] = derivative * (rawValues[i] - tValues[i]);
+            }
+
+            return gradTerms;
+        }
+
+        private static double[] CalculateGradTermsForNonLast(IReadOnlyList<double> rawValues,
+            IReadOnlyList<double[]> nextNeuronLayerWeights,
+            IReadOnlyList<double> nextGradTerms)
+        {
+            double[] gradTerms = new double[rawValues.Count];
+            for (int i = 0; i < rawValues.Count; ++i)
+            {
+                double value = rawValues[i];
+                // derivative of tanh = (1 - y) * (1 + y)
+                double derivative = (1 - value) * (1 + value);
+                double sum = nextGradTerms.Select((t, j) => t * nextNeuronLayerWeights[j][i]).Sum();
+                // each hidden delta is the sum of this.sizes[2] terms
+                gradTerms[i] = derivative * sum;
+            }
+
+            return gradTerms;
+        }
+
+        protected static double HyperTan(double x)
+        {
+            if (x < -20.0) return -1.0; // approximation is correct to 30 decimals
+            return x > 20.0 ? 1.0 : Math.Tanh(x);
+        }
+
+        protected static double[] Softmax(IReadOnlyList<double> oSums)
+        {
+            // does all output nodes at once so scale doesn't have to be re-computed each time
+            // determine max output-sum
+            double max = oSums[0];
+            max = oSums.Concat(new[] {max}).Max();
+
+            // determine scaling factor -- sum of exp(each val - max)
+            double scale = oSums.Sum(t => Math.Exp(t - max));
+
+            double[] result = new double[oSums.Count];
+            for (int i = 0; i < oSums.Count; ++i)
+                result[i] = Math.Exp(oSums[i] - max) / scale;
+
+            return result; // now scaled so that xi sum to 1.0
+        }
+    }
+
+    public abstract class AbstractNeuralNetwork
     {
         protected readonly Random Rnd;
 
@@ -223,7 +317,7 @@ namespace ResilientBackProp
         public const double DeltaMax = 50.0;
         public const double DeltaMin = 1.0E-6;
 
-        public NeuralNetwork(int numInput, int numHidden, int numOutput)
+        protected AbstractNeuralNetwork(int numInput, int numHidden, int numOutput)
         {
             this.LayerCount = 3;
             this.Sizes = new int[LayerCount];
@@ -246,7 +340,12 @@ namespace ResilientBackProp
             this.InitializeWeights(); // all weights and biases
         } // ctor
 
-        private static double[][] MakeMatrix(int rows,
+        protected abstract double[] ActivateFunction(IReadOnlyList<double> rawValues, int layerId);
+
+        protected abstract double[][] CalculateGradTerms(double[][] rawValues,
+            IReadOnlyList<double> tValues);
+
+        protected static double[][] MakeMatrix(int rows,
             int cols, double v) // helper for ctor, Train
         {
             double[][] result = new double[rows][];
@@ -258,7 +357,7 @@ namespace ResilientBackProp
             return result;
         }
 
-        private static double[] MakeVector(int len, double v) // helper for Train
+        protected static double[] MakeVector(int len, double v) // helper for Train
         {
             double[] result = new double[len];
             for (int i = 0; i < len; ++i)
@@ -266,7 +365,7 @@ namespace ResilientBackProp
             return result;
         }
 
-        private void InitializeWeights() // helper for ctor
+        protected void InitializeWeights() // helper for ctor
         {
             // initialize weights and biases to random values between 0.0001 and 0.001
             int numWeights = this.GetWeightsCount();
@@ -282,9 +381,6 @@ namespace ResilientBackProp
         // ReSharper disable once InconsistentNaming
         public double[] TrainRPROP(double[][] trainData, int maxEpochs) // using RPROP
         {
-            // there is an accumulated gradient and a previous gradient for each weight and bias
-            double[][] gradTerms = new double[this.LayerCount][];
-
             WeightComposite[] allGradsAcc = new WeightComposite[this.LayerCount];
             WeightComposite[] prevGradsAcc = new WeightComposite[this.LayerCount];
             WeightComposite[] prevDeltas = new WeightComposite[this.LayerCount];
@@ -292,8 +388,6 @@ namespace ResilientBackProp
             {
                 int size = this.Sizes[i];
                 int prevSize = this.Sizes[i - 1];
-
-                gradTerms[i] = new double[size];
 
                 // accumulated over all training data
                 allGradsAcc[i].Biases = new double[size];
@@ -328,7 +422,7 @@ namespace ResilientBackProp
                     ZeroOut(allGradsAcc[layer].Weights);
                     ZeroOut(allGradsAcc[layer].Biases);
                 }
-                this.ComputeGraduate(trainData, gradTerms, allGradsAcc);
+                this.ComputeGraduate(trainData, allGradsAcc);
                 // update all weights and biases (in any order)
                 this.UpdateWeigtsAndBiases(allGradsAcc, prevGradsAcc, prevDeltas);
             } // while
@@ -337,7 +431,7 @@ namespace ResilientBackProp
             return wts;
         } // Train
 
-        private static void ZeroOut(double[][] matrix)
+        protected static void ZeroOut(double[][] matrix)
         {
             foreach (double[] t in matrix)
             {
@@ -348,7 +442,7 @@ namespace ResilientBackProp
             }
         }
 
-        private static void ZeroOut(double[] array) // helper for Train
+        protected static void ZeroOut(double[] array) // helper for Train
         {
             for (int i = 0; i < array.Length; ++i)
                 array[i] = 0.0;
@@ -428,24 +522,12 @@ namespace ResilientBackProp
                 {
                     for (int i = 0; i < this.Sizes[layer - 1]; ++i)
                     {
-                        this.Layers[layer][j] += this.Layers[layer - 1][i] *
-                                                 this.Neurons[layer].Weights[j][i]; // note +=
+                        this.Layers[layer][j] +=
+                            this.Layers[layer - 1][i] * this.Neurons[layer].Weights[j][i]; // note +=
                     }
                 }
 
-                if (layer < this.LayerCount - 1)
-                {
-                    for (int i = 0; i < this.Sizes[1]; ++i) // apply activation
-                    {
-                        this.Layers[layer][i] = HyperTan(this.Layers[layer][i]); // hard-coded
-                    }
-                }
-                else
-                {
-                    // softmax activation does all outputs at once for efficiency
-                    double[] softOut = Softmax(this.Layers[layer]);
-                    Array.Copy(softOut, this.Layers[layer], softOut.Length);
-                }
+                this.Layers[layer] = this.ActivateFunction(this.Layers[layer], layer);
             }
 
             double[] retResult =
@@ -454,42 +536,20 @@ namespace ResilientBackProp
             return retResult;
         }
 
-        private static double HyperTan(double x)
-        {
-            if (x < -20.0) return -1.0; // approximation is correct to 30 decimals
-            return x > 20.0 ? 1.0 : Math.Tanh(x);
-        }
-
-        private static double[] Softmax(IReadOnlyList<double> oSums)
-        {
-            // does all output nodes at once so scale doesn't have to be re-computed each time
-            // determine max output-sum
-            double max = oSums[0];
-            max = oSums.Concat(new[] {max}).Max();
-
-            // determine scaling factor -- sum of exp(each val - max)
-            double scale = oSums.Sum(t => Math.Exp(t - max));
-
-            double[] result = new double[oSums.Count];
-            for (int i = 0; i < oSums.Count; ++i)
-                result[i] = Math.Exp(oSums[i] - max) / scale;
-
-            return result; // now scaled so that xi sum to 1.0
-        }
-
         public double Accuracy(double[][] testData, double[] weights)
         {
             this.SetWeights(weights);
             // percentage correct using winner-takes all
             int numCorrect = 0;
             int numWrong = 0;
+            int lastLayerId = this.LayerCount - 1;
             double[] xValues = new double[this.Sizes[0]]; // inputs
-            double[] tValues = new double[this.Sizes[2]]; // targets
+            double[] tValues = new double[this.Sizes[lastLayerId]]; // targets
 
             foreach (double[] t in testData)
             {
                 Array.Copy(t, xValues, this.Sizes[0]); // parse data into x-values and t-values
-                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[2]);
+                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]);
                 var yValues = this.ComputeOutputs(xValues); // computed Y
                 int maxIndex = MaxIndex(yValues); // which cell in yValues has largest value?
 
@@ -506,15 +566,16 @@ namespace ResilientBackProp
         {
             this.SetWeights(weights); // copy the weights to evaluate in
 
+            int lastLayerId = this.LayerCount - 1;
             double[] xValues = new double[this.Sizes[0]]; // inputs
-            double[] tValues = new double[this.Sizes[this.LayerCount - 1]]; // targets
+            double[] tValues = new double[this.Sizes[lastLayerId]]; // targets
             double sumSquaredError = 0.0;
             double sumSquaredErrorItem = 0.0;
             foreach (double[] t in trainData)
             {
                 // following assumes data has all x-values first, followed by y-values!
                 Array.Copy(t, xValues, this.Sizes[0]); // extract inputs
-                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[this.LayerCount - 1]); // extract targets
+                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]); // extract targets
                 double[] yValues = this.ComputeOutputs(xValues);
                 double thisItemErrSum = 0;
                 for (int j = 0; j < yValues.Length; ++j)
@@ -566,7 +627,7 @@ namespace ResilientBackProp
         /**
          * update all weights and biases
          */
-        protected void ComputeGraduate(double[][] trainData, double[][] gradTerms, WeightComposite[] allGradsAcc)
+        protected void ComputeGraduate(double[][] trainData, WeightComposite[] allGradsAcc)
         {
             int lastLayerId = this.LayerCount - 1;
             double[] xValues = new double[this.Sizes[0]]; // inputs
@@ -575,41 +636,13 @@ namespace ResilientBackProp
             {
                 // no need to visit in random order because all rows processed before any updates ('batch')
                 Array.Copy(t, xValues, this.Sizes[0]); // get the inputs
-                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[2]); // get the target values
+                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]); // get the target values
                 // copy xValues in, compute outputs using curr weights (and store outputs internally)
-                ComputeOutputs(xValues);
+                this.ComputeOutputs(xValues);
 
-                // compute the h-o gradient term/component as in regular back-prop
-                // this term usually is lower case Greek delta but there are too many other deltas below
-                for (int i = 0; i < this.Sizes[lastLayerId]; ++i)
-                {
-                    double value = this.Layers[lastLayerId][i];
-                    // derivative of softmax = (1 - y) * y (same as log-sigmoid)
-                    double derivative = (1 - value) * value;
-                    // careful with O-T vs. T-O, O-T is the most usual
-                    gradTerms[lastLayerId][i] = derivative * (value - tValues[i]);
-                }
+                double[][] gradTerms = this.CalculateGradTerms(this.Layers, tValues);
 
-                // compute the i-h gradient term/component as in regular back-prop
-                for (int layer = LayerCount - 2; layer > 0; layer--)
-                {
-                    for (int i = 0; i < this.Sizes[layer]; ++i)
-                    {
-                        double value = this.Layers[layer][i];
-                        // derivative of tanh = (1 - y) * (1 + y)
-                        double derivative = (1 - value) * (1 + value);
-                        double sum = 0.0;
-                        // each hidden delta is the sum of this.sizes[2] terms
-                        for (int j = 0; j < this.Sizes[lastLayerId]; ++j)
-                        {
-                            double x = gradTerms[lastLayerId][j] * this.Neurons[lastLayerId].Weights[j][i];
-                            sum += x;
-                        }
-                        gradTerms[layer][i] = derivative * sum;
-                    }
-                }
-
-                for (int layer = this.LayerCount - 1; layer > 0; layer--)
+                for (int layer = lastLayerId; layer > 0; layer--)
                 {
                     // add input to h-o component to make h-o weight gradients, and accumulate
                     for (int j = 0; j < this.Sizes[layer]; ++j)
@@ -645,11 +678,11 @@ namespace ResilientBackProp
                         double t = prevGradsAcc[layer].Weights[j][i] * allGradsAcc[layer].Weights[j][i];
                         if (t > 0) // no sign change, increase delta
                         {
-                            delta *= NeuralNetwork.EtaPlus; // compute delta
+                            delta *= AbstractNeuralNetwork.EtaPlus; // compute delta
                             // keep it in range
-                            if (delta > NeuralNetwork.DeltaMax)
+                            if (delta > AbstractNeuralNetwork.DeltaMax)
                             {
-                                delta = NeuralNetwork.DeltaMax;
+                                delta = AbstractNeuralNetwork.DeltaMax;
                             }
                             // determine direction and magnitude
                             double tmp = -Math.Sign(allGradsAcc[layer].Weights[j][i]) * delta;
@@ -657,11 +690,11 @@ namespace ResilientBackProp
                         }
                         else if (t < 0) // grad changed sign, decrease delta
                         {
-                            delta *= NeuralNetwork.EtaMinus; // the delta (not used, but saved for later)
+                            delta *= AbstractNeuralNetwork.EtaMinus; // the delta (not used, but saved for later)
                             // keep it in range
-                            if (delta < NeuralNetwork.DeltaMin)
+                            if (delta < AbstractNeuralNetwork.DeltaMin)
                             {
-                                delta = NeuralNetwork.DeltaMin;
+                                delta = AbstractNeuralNetwork.DeltaMin;
                             }
                             this.Neurons[layer].Weights[j][i] -=
                                 prevDeltas[layer].Weights[j][i]; // revert to previous weight
@@ -688,33 +721,33 @@ namespace ResilientBackProp
                     double t = prevGradsAcc[layer].Biases[i] * allGradsAcc[layer].Biases[i];
                     if (t > 0) // no sign change, increase delta
                     {
-                        delta *= NeuralNetwork.EtaPlus; // compute delta
-                        if (delta > NeuralNetwork.DeltaMax)
+                        delta *= AbstractNeuralNetwork.EtaPlus; // compute delta
+                        if (delta > AbstractNeuralNetwork.DeltaMax)
                         {
-                            delta = NeuralNetwork.DeltaMax;
+                            delta = AbstractNeuralNetwork.DeltaMax;
                         }
                         double tmp = -Math.Sign(allGradsAcc[layer].Biases[i]) * delta; // determine direction
                         this.Neurons[layer].Biases[i] += tmp; // update
                     }
                     else if (t < 0) // grad changed sign, decrease delta
                     {
-                        delta *= NeuralNetwork.EtaMinus; // the delta (not used, but saved later)
-                        if (delta < NeuralNetwork.DeltaMin)
+                        delta *= AbstractNeuralNetwork.EtaMinus; // the delta (not used, but saved later)
+                        if (delta < AbstractNeuralNetwork.DeltaMin)
                         {
-                            delta = NeuralNetwork.DeltaMin;
+                            delta = AbstractNeuralNetwork.DeltaMin;
                         }
                         this.Neurons[layer].Biases[i] -= prevDeltas[layer].Biases[i]; // revert to previous weight
                         allGradsAcc[layer].Biases[i] = 0; // forces next branch, next iteration
                     }
                     else // this happens next iteration after 2nd branch above (just had a change in gradient)
                     {
-                        if (delta > NeuralNetwork.DeltaMax)
+                        if (delta > AbstractNeuralNetwork.DeltaMax)
                         {
-                            delta = NeuralNetwork.DeltaMax;
+                            delta = AbstractNeuralNetwork.DeltaMax;
                         }
-                        else if (delta < NeuralNetwork.DeltaMin)
+                        else if (delta < AbstractNeuralNetwork.DeltaMin)
                         {
-                            delta = NeuralNetwork.DeltaMin;
+                            delta = AbstractNeuralNetwork.DeltaMin;
                         }
                         // no way should delta be 0 . . .
                         double tmp = -Math.Sign(allGradsAcc[layer].Biases[i]) * delta; // determine direction
