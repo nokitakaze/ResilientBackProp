@@ -206,7 +206,7 @@ namespace ResilientBackProp
 
     public struct ThreadInputDatum
     {
-        public double[] trainDatum;
+        public double[][] trainDatum;
         public WeightComposite[] allGradsAcc;
         public double[][] field;
     }
@@ -748,6 +748,8 @@ namespace ResilientBackProp
             }
 
             List<double[]> innerTrainData = new List<double[]>(trainData);
+            List<double[]> innerTrainDataChunk = new List<double[]>();
+            int chunk_size = (int) (innerTrainData.Count * 0.8 / this.threadCount);
             while (innerTrainData.Count > 0)
             {
                 int currentThread = -1;
@@ -769,8 +771,13 @@ namespace ResilientBackProp
                     continue;
                 }
 
-                threadInputData[currentThread].trainDatum = innerTrainData[0];
-                innerTrainData.RemoveAt(0);
+                innerTrainDataChunk.Clear();
+                while ((innerTrainDataChunk.Count < chunk_size) && (innerTrainData.Count > 0))
+                {
+                    innerTrainDataChunk.Add(innerTrainData[0]);
+                    innerTrainData.RemoveAt(0);
+                }
+                threadInputData[currentThread].trainDatum = innerTrainDataChunk.ToArray();
 
                 for (int layer = 1; layer < this.LayerCount; layer++)
                 {
@@ -816,26 +823,30 @@ namespace ResilientBackProp
             double[] xValues = new double[this.Sizes[0]]; // inputs
             double[] tValues = new double[this.Sizes[lastLayerId]]; // target values
 
-            // no need to visit in random order because all rows processed before any updates ('batch')
-            Array.Copy(inputDatum.trainDatum, xValues, this.Sizes[0]); // get the inputs
-            Array.Copy(inputDatum.trainDatum, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]); // get the target values
-            // copy xValues in, compute outputs using curr weights (and store outputs internally)
-            this.ComputeOutputs(xValues, inputDatum.field);
-
-            double[][] gradTerms = this.CalculateGradTerms(inputDatum.field, tValues);
-
-            for (int layer = lastLayerId; layer > 0; layer--)
+            foreach (double[] t in inputDatum.trainDatum)
             {
-                // add input to h-o component to make h-o weight gradients, and accumulate
-                for (int j = 0; j < this.Sizes[layer]; ++j)
-                {
-                    double grad = gradTerms[layer][j];
-                    inputDatum.allGradsAcc[layer].Biases[j] += grad;
+                // no need to visit in random order because all rows processed before any updates ('batch')
+                Array.Copy(t, xValues, this.Sizes[0]); // get the inputs
+                Array.Copy(t, this.Sizes[0], tValues, 0,
+                    this.Sizes[lastLayerId]); // get the target values
+                // copy xValues in, compute outputs using curr weights (and store outputs internally)
+                this.ComputeOutputs(xValues, inputDatum.field);
 
-                    for (int i = 0; i < this.Sizes[layer - 1]; ++i)
+                double[][] gradTerms = this.CalculateGradTerms(inputDatum.field, tValues);
+
+                for (int layer = lastLayerId; layer > 0; layer--)
+                {
+                    // add input to h-o component to make h-o weight gradients, and accumulate
+                    for (int j = 0; j < this.Sizes[layer]; ++j)
                     {
-                        grad = gradTerms[layer][j] * inputDatum.field[layer - 1][i];
-                        inputDatum.allGradsAcc[layer].Weights[j][i] += grad;
+                        double grad = gradTerms[layer][j];
+                        inputDatum.allGradsAcc[layer].Biases[j] += grad;
+
+                        for (int i = 0; i < this.Sizes[layer - 1]; ++i)
+                        {
+                            grad = gradTerms[layer][j] * inputDatum.field[layer - 1][i];
+                            inputDatum.allGradsAcc[layer].Weights[j][i] += grad;
+                        }
                     }
                 }
             }
