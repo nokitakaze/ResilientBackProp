@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.Serialization;
+using System.Runtime.Serialization.Json;
 
 // See "A Direct Adaptive Method for Faster Backpropagation Learning: The RPROP Algorithm",
 // M. Riedmiller and H. Braun,
@@ -13,32 +15,20 @@ namespace ResilientBackProp
 {
     internal class RpropProgram
     {
+        private static double[][] trainData;
+        private static double[][] testData;
+
+        const int numInput = 7959; // number features
+        const int numOutput = 64; // number of classes for Y
+        const int numHidden = numOutput * 2;
+
         public static void Main(string[] args)
         {
             Console.WriteLine("\nBegin neural network with Resilient Back-Propagation (RPROP) training demo");
 
-            const int numInput = 4; // number features
-            const int numHidden = 5;
-            const int numOutput = 3; // number of classes for Y
-            const int numRows = 10000;
+            LoadData();
 
-            Console.WriteLine("\nGenerating " + numRows + " artificial data items with " + numInput + " features");
-            double[][] allData = MakeAllData(numInput, numHidden, numOutput, numRows);
-            Console.WriteLine("Done");
-
-            Console.WriteLine("\nCreating train (80%) and test (20%) matrices");
-            double[][] trainData;
-            double[][] testData;
-            MakeTrainTest(allData, 0.80, out trainData, out testData);
-            Console.WriteLine("Done");
-
-            Console.WriteLine("\nTraining data: \n");
-            ShowData(trainData, 4, 2, true);
-
-            Console.WriteLine("Test data: \n");
-            ShowData(testData, 3, 2, true);
-
-            Console.WriteLine("Creating a 4-5-3 neural network");
+            Console.WriteLine("Create neural network");
             int[] sizes = {numInput, numHidden, numOutput};
             NeuralNetwork nn = new NeuralNetwork(sizes);
             nn.Save("before_test.dat");
@@ -47,7 +37,7 @@ namespace ResilientBackProp
             Console.WriteLine("\nSetting maxEpochs = " + maxEpochs);
 
             Console.WriteLine("\nStarting RPROP training");
-            double[] weights = nn.TrainRPROP(trainData, maxEpochs); // RPROP
+            double[] weights = nn.TrainRPROP(trainData, maxEpochs, testData); // RPROP
             nn.Save("after_test.dat");
             Console.WriteLine("Done");
             Console.WriteLine("\nFinal neural network model weights:\n");
@@ -64,92 +54,6 @@ namespace ResilientBackProp
             Console.WriteLine("\nEnd neural network with Resilient Propagation demo\n");
             Console.ReadLine();
         } // Main
-
-        /**
-         * Generate synthetic data
-         */
-        protected static double[][] MakeAllData(int numInput, int numHidden, int numOutput,
-            int numRows)
-        {
-            Random rnd = new Random();
-            int numWeights = numInput * numHidden + numHidden +
-                             numHidden * numOutput + numOutput;
-            double[] weights = new double[numWeights]; // actually weights & biases
-            for (int i = 0; i < numWeights; ++i)
-                weights[i] = 20.0 * rnd.NextDouble() - 10.0; // [-10.0 to -10.0]
-
-            Console.WriteLine("Generating weights:");
-            ShowVector(weights, 4, 10, true);
-
-            double[][] result = new double[numRows][]; // allocate return-result matrix
-            for (int i = 0; i < numRows; ++i)
-                result[i] = new double[numInput + numOutput]; // 1-of-N Y in last column
-
-            int[] sizes = {numInput, numHidden, numOutput};
-            NeuralNetwork gnn = new NeuralNetwork(sizes); // generating NN
-            gnn.SetWeights(weights);
-
-            for (int r = 0; r < numRows; ++r) // for each row
-            {
-                // generate random inputs
-                double[] inputs = new double[numInput];
-                for (int i = 0; i < numInput; ++i)
-                    inputs[i] = 20.0 * rnd.NextDouble() - 10.0; // [-10.0 to -10.0]
-
-                // compute outputs
-                double[] outputs = gnn.ComputeOutputs(inputs);
-                // translate outputs to 1-of-N
-                double[] oneOfN = new double[numOutput]; // all 0.0
-                int maxIndex = 0;
-                double maxValue = outputs[0];
-                for (int i = 0; i < numOutput; ++i)
-                {
-                    if (!(outputs[i] > maxValue)) continue;
-                    maxIndex = i;
-                    maxValue = outputs[i];
-                }
-                oneOfN[maxIndex] = 1.0;
-
-                // place inputs and 1-of-N output values into curr row
-                int c = 0; // column into result[][]
-                for (int i = 0; i < numInput; ++i) // inputs
-                    result[r][c++] = inputs[i];
-                for (int i = 0; i < numOutput; ++i) // outputs
-                    result[r][c++] = oneOfN[i];
-            } // each row
-            return result;
-        } // MakeAllData
-
-        /**
-         * Put synthetic data to train and test
-         */
-        protected static void MakeTrainTest(double[][] allData, double trainPct,
-            out double[][] trainData, out double[][] testData)
-        {
-            Random rnd = new Random();
-            int totRows = allData.Length;
-            int numTrainRows = (int) (totRows * trainPct); // usually 0.80
-            int numTestRows = totRows - numTrainRows;
-            trainData = new double[numTrainRows][];
-            testData = new double[numTestRows][];
-
-            double[][] copy = new double[allData.Length][]; // ref copy of all data
-            for (int i = 0; i < copy.Length; ++i)
-                copy[i] = allData[i];
-
-            for (int i = 0; i < copy.Length; ++i) // scramble order
-            {
-                int r = rnd.Next(i, copy.Length); // use Fisher-Yates
-                double[] tmp = copy[r];
-                copy[r] = copy[i];
-                copy[i] = tmp;
-            }
-            for (int i = 0; i < numTrainRows; ++i)
-                trainData[i] = copy[i];
-
-            for (int i = 0; i < numTestRows; ++i)
-                testData[i] = copy[i + numTrainRows];
-        } // MakeTrainTest
 
         public static void ShowData(double[][] data, int numRows,
             int decimals, bool indices)
@@ -194,7 +98,116 @@ namespace ResilientBackProp
             if (newLine)
                 Console.WriteLine("");
         }
+
+        protected static void LoadData()
+        {
+            DataContractJsonSerializer jsonFormatter =
+                new DataContractJsonSerializer(typeof(TemporaryJsonClassDA[]));
+            DataContractJsonSerializer jsonFormatterUID =
+                new DataContractJsonSerializer(typeof(TemporaryJsonClassI[]));
+
+            const int learn_file_count = 2;//315;
+            const int test_file_count = 1;//90;
+
+            List<double[]> learn_data = new List<double[]>();
+            TemporaryJsonClassDA[] inner;
+            TemporaryJsonClassI[] outer;
+
+            double[] datum = new double[numInput + numOutput];
+            for (int i = 0; i < learn_file_count; i++)
+            {
+                Console.WriteLine("Load Learn {0}", i);
+                string s = "D:/_dev_stand/fp_txt_to_dat/output_json/learn-" + i + ".json";
+                using (FileStream fs = new FileStream(s, FileMode.Open))
+                {
+                    inner = (TemporaryJsonClassDA[]) jsonFormatter.ReadObject(fs);
+                }
+
+                s = "D:/_dev_stand/fp_txt_to_dat/output_json/learn-" + i + ".out.json";
+                using (FileStream fs = new FileStream(s, FileMode.Open))
+                {
+                    outer = (TemporaryJsonClassI[]) jsonFormatterUID.ReadObject(fs);
+                }
+                if (inner.Length != outer.Length)
+                {
+                    throw new Exception();
+                }
+
+                for (int j = 0; j < inner.Length; j++)
+                {
+                    if (inner[j].v.Length != numInput)
+                    {
+                        throw new Exception();
+                    }
+                    Array.Copy(inner[j].v, datum, numInput);
+                    for (int n = numInput; n < numInput + numOutput; n++)
+                    {
+                        datum[n] = 0;
+                    }
+                    if (outer[j].v >= numOutput)
+                    {
+                        throw new Exception();
+                    }
+                    datum[outer[j].v + numInput] = 1;
+                    learn_data.Add(datum);
+                }
+            }
+            trainData = learn_data.ToArray();
+            learn_data.Clear();
+
+            for (int i = 0; i < test_file_count; i++)
+            {
+                Console.WriteLine("Load Test1 {0}", i);
+                string s = "D:/_dev_stand/fp_txt_to_dat/output_json/test1-" + i + ".json";
+                using (FileStream fs = new FileStream(s, FileMode.Open))
+                {
+                    inner = (TemporaryJsonClassDA[]) jsonFormatter.ReadObject(fs);
+                }
+
+                s = "D:/_dev_stand/fp_txt_to_dat/output_json/test1-" + i + ".out.json";
+                using (FileStream fs = new FileStream(s, FileMode.Open))
+                {
+                    outer = (TemporaryJsonClassI[]) jsonFormatterUID.ReadObject(fs);
+                }
+                if (inner.Length != outer.Length)
+                {
+                    throw new Exception();
+                }
+
+                for (int j = 0; j < inner.Length; j++)
+                {
+                    if (inner[j].v.Length != numInput)
+                    {
+                        throw new Exception();
+                    }
+                    Array.Copy(inner[j].v, datum, numInput);
+                    for (int n = numInput; n < numInput + numOutput; n++)
+                    {
+                        datum[n] = 0;
+                    }
+                    if (outer[j].v >= numOutput)
+                    {
+                        throw new Exception();
+                    }
+                    datum[outer[j].v + numInput] = 1;
+                    learn_data.Add(datum);
+                }
+            }
+            testData = learn_data.ToArray();
+        }
     } // Program
+
+    [DataContract]
+    internal class TemporaryJsonClassDA
+    {
+        [DataMember] public double[] v;
+    }
+
+    [DataContract]
+    internal class TemporaryJsonClassI
+    {
+        [DataMember] public int v;
+    }
 
     public struct WeightComposite
     {
@@ -369,19 +382,31 @@ namespace ResilientBackProp
 
         protected void InitializeWeights() // helper for ctor
         {
-            // initialize weights and biases to random values between 0.0001 and 0.001
-            int numWeights = this.GetWeightsCount();
-            double[] initialWeights = new double[numWeights];
-            // @todo Переписать, веса надо нормализировать
-            for (int i = 0; i < initialWeights.Length; ++i)
+            for (int layer = 1; layer < this.LayerCount; layer++)
             {
-                initialWeights[i] = (0.001 - 0.0001) * Rnd.NextDouble() + 0.0001;
+                int size = this.Sizes[layer];
+                int prev_size = this.Sizes[layer - 1];
+                for (int node = 0; node < size; node++)
+                {
+                    this.Neurons[layer].Biases[node] = (0.001 - 0.0001) * Rnd.NextDouble() + 0.0001;
+                    this.Neurons[layer].Weights[node] = new double[prev_size];
+                    double vj = 0;
+                    for (int i = 0; i < prev_size; i++)
+                    {
+                        this.Neurons[layer].Weights[node][i] = (0.001 - 0.0001) * Rnd.NextDouble() + 0.0001;
+                        vj += Math.Pow(this.Neurons[layer].Weights[node][i], 2);
+                    }
+                    vj = 0.7 * Math.Pow(size, 1.0 / prev_size) / Math.Sqrt(vj);
+                    for (int i = 0; i < prev_size; i++)
+                    {
+                        this.Neurons[layer].Weights[node][i] *= vj;
+                    }
+                }
             }
-            this.SetWeights(initialWeights);
         }
 
         // ReSharper disable once InconsistentNaming
-        public double[] TrainRPROP(double[][] trainData, int maxEpochs) // using RPROP
+        public double[] TrainRPROP(double[][] trainData, int maxEpochs, double[][] testData) // using RPROP
         {
             WeightComposite[] allGradsAcc = new WeightComposite[this.LayerCount];
             WeightComposite[] prevGradsAcc = new WeightComposite[this.LayerCount];
@@ -404,18 +429,18 @@ namespace ResilientBackProp
                 prevDeltas[i].Weights = MakeMatrix(size, prevSize, 0.01);
             }
 
+            {
+                double[] currWts = this.GetWeights();
+                double[] err = RootMeanSquaredError(trainData, currWts);
+                double[] err_t = RootMeanSquaredError(testData, currWts);
+                Console.WriteLine("\nepoch = pre; err = {0:F4} [{1:F4}]\ttest err = {2:F4} [{3:F4}]",
+                    err[0], err[1], err_t[0], err_t[1]);
+            }
+
             int epoch = 0;
             while (epoch < maxEpochs)
             {
                 ++epoch;
-
-                if (epoch % 100 == 0 && epoch != maxEpochs)
-                {
-                    double[] currWts = this.GetWeights();
-                    double[] err = RootMeanSquaredError(trainData, currWts);
-                    Console.WriteLine("epoch = " + epoch + " err = " + err[0].ToString("F4") + " [" +
-                                      err[1].ToString("F4") + "]");
-                }
 
                 // 1. compute and accumulate all gradients
                 for (int layer = 1; layer < this.LayerCount; layer++)
@@ -427,6 +452,24 @@ namespace ResilientBackProp
                 this.ComputeGraduate(trainData, allGradsAcc);
                 // update all weights and biases (in any order)
                 this.UpdateWeigtsAndBiases(allGradsAcc, prevGradsAcc, prevDeltas);
+
+                if (epoch % 10 == 0 && epoch != maxEpochs)
+                {
+                    double[] currWts = this.GetWeights();
+                    double[] err = RootMeanSquaredError(trainData, currWts);
+                    double[] err_t = RootMeanSquaredError(testData, currWts);
+                    Console.WriteLine("\nepoch = {0} err = {1:F4} [{2:F4}]\ttest err = {3:F4} [{4:F4}]",
+                        epoch, err[0], err[1], err_t[0], err_t[1]);
+                    this.Save($"epoch-{epoch}.dat");
+                }
+                else
+                {
+                    Console.Write(".");
+                    if (epoch % 10 == 0)
+                    {
+                        Console.Write(" ");
+                    }
+                }
             } // while
 
             double[] wts = this.GetWeights();
@@ -569,24 +612,24 @@ namespace ResilientBackProp
             this.SetWeights(weights); // copy the weights to evaluate in
 
             int lastLayerId = this.LayerCount - 1;
+            int outputSize = this.Sizes[lastLayerId];
+            int trainDataSize = trainData.Length;
             double[] xValues = new double[this.Sizes[0]]; // inputs
-            double[] tValues = new double[this.Sizes[lastLayerId]]; // targets
+            double[] tValues = new double[outputSize]; // targets
             double sumSquaredError = 0.0;
             double sumSquaredErrorItem = 0.0;
             foreach (double[] t in trainData)
             {
                 // following assumes data has all x-values first, followed by y-values!
                 Array.Copy(t, xValues, this.Sizes[0]); // extract inputs
-                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]); // extract targets
+                Array.Copy(t, this.Sizes[0], tValues, 0, outputSize); // extract targets
                 double[] yValues = this.ComputeOutputs(xValues);
-                double thisItemErrSum = 0;
-                for (int j = 0; j < yValues.Length; ++j)
+                for (int j = 0; j < outputSize; ++j)
                 {
                     double err = Math.Pow(yValues[j] - tValues[j], 2);
-                    sumSquaredError += err / trainData.Length;
-                    thisItemErrSum += err / yValues.Length;
+                    sumSquaredError += err / trainDataSize;
+                    sumSquaredErrorItem += err / trainDataSize / outputSize;
                 }
-                sumSquaredErrorItem += thisItemErrSum / trainData.Length;
             }
             double[] d = new double[2];
             d[0] = Math.Sqrt(sumSquaredErrorItem);
