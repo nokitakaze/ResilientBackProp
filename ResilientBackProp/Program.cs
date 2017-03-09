@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using System.Threading;
 
 // See "A Direct Adaptive Method for Faster Backpropagation Learning: The RPROP Algorithm",
 // M. Riedmiller and H. Braun,
@@ -37,11 +38,12 @@ namespace ResilientBackProp
             Console.WriteLine("\nSetting maxEpochs = " + maxEpochs);
 
             Console.WriteLine("\nStarting RPROP training");
+            nn.multiThread = true;
             double[] weights = nn.TrainRPROP(trainData, maxEpochs, testData); // RPROP
             nn.Save("after_test.dat");
             Console.WriteLine("Done");
             Console.WriteLine("\nFinal neural network model weights:\n");
-            ShowVector(weights, 4, 10, true);
+            // ShowVector(weights, 4, 10, true);
 
             double trainAcc = nn.Accuracy(trainData, weights);
             Console.WriteLine("\nAccuracy on training data = " +
@@ -106,8 +108,8 @@ namespace ResilientBackProp
             DataContractJsonSerializer jsonFormatterUID =
                 new DataContractJsonSerializer(typeof(TemporaryJsonClassI[]));
 
-            const int learn_file_count = 2;//315;
-            const int test_file_count = 1;//90;
+            const int learn_file_count = 315;//315;
+            const int test_file_count = 90;//90;
 
             List<double[]> learn_data = new List<double[]>();
             TemporaryJsonClassDA[] inner;
@@ -213,6 +215,13 @@ namespace ResilientBackProp
     {
         public double[][] Weights;
         public double[] Biases;
+    }
+
+    public struct ThreadInputDatum
+    {
+        public double[] trainDatum;
+        public WeightComposite[] allGradsAcc;
+        public double[][] field;
     }
 
     public class NeuralNetwork : AbstractNeuralNetwork
@@ -331,6 +340,9 @@ namespace ResilientBackProp
         public const double DeltaMax = 50.0;
         public const double DeltaMin = 1.0E-6;
 
+        public bool multiThread;
+        public int threadCount;
+
         protected AbstractNeuralNetwork(IReadOnlyList<int> sizes)
         {
             this.LayerCount = sizes.Count;
@@ -429,6 +441,11 @@ namespace ResilientBackProp
                 prevDeltas[i].Weights = MakeMatrix(size, prevSize, 0.01);
             }
 
+            if (this.multiThread && (this.threadCount == 0))
+            {
+                this.threadCount = Environment.ProcessorCount - 1;
+            }
+
             {
                 double[] currWts = this.GetWeights();
                 double[] err = RootMeanSquaredError(trainData, currWts);
@@ -453,19 +470,23 @@ namespace ResilientBackProp
                 // update all weights and biases (in any order)
                 this.UpdateWeigtsAndBiases(allGradsAcc, prevGradsAcc, prevDeltas);
 
-                if (epoch % 10 == 0 && epoch != maxEpochs)
+                double[] currWts = this.GetWeights();
+                double[] err = RootMeanSquaredError(trainData, currWts);
+                if ((epoch % 10 == 0) || (err[0] <= 0.0001))
                 {
-                    double[] currWts = this.GetWeights();
-                    double[] err = RootMeanSquaredError(trainData, currWts);
                     double[] err_t = RootMeanSquaredError(testData, currWts);
-                    Console.WriteLine("\nepoch = {0} err = {1:F4} [{2:F4}]\ttest err = {3:F4} [{4:F4}]",
+                    Console.WriteLine(".\nepoch = {0} err = {1:F4} [{2:F4}]\ttest err = {3:F4} [{4:F4}]",
                         epoch, err[0], err[1], err_t[0], err_t[1]);
                     this.Save($"epoch-{epoch}.dat");
+                    if (err[0] <= 0.001)
+                    {
+                        return currWts;
+                    }
                 }
                 else
                 {
                     Console.Write(".");
-                    if (epoch % 10 == 0)
+                    if (epoch % 5 == 0)
                     {
                         Console.Write(" ");
                     }
@@ -555,30 +576,28 @@ namespace ResilientBackProp
             return result;
         }
 
-        public double[] ComputeOutputs(double[] xValues)
+        public double[] ComputeOutputs(double[] xValues, double[][] outputLayers = null)
         {
-            this.Layers[0] = xValues;
+            double[][] field = outputLayers ?? this.Layers;
+            field[0] = xValues;
             for (int layer = 1; layer < this.LayerCount; layer++)
             {
-                this.Layers[layer] = new double[this.Sizes[layer]];
-                Array.Copy(this.Neurons[layer].Biases, this.Layers[layer], this.Sizes[layer]);
+                field[layer] = new double[this.Sizes[layer]];
+                Array.Copy(this.Neurons[layer].Biases, field[layer], this.Sizes[layer]);
 
                 for (int j = 0; j < this.Sizes[layer]; ++j) // compute i-h sum of weights * inputs
                 {
                     for (int i = 0; i < this.Sizes[layer - 1]; ++i)
                     {
-                        this.Layers[layer][j] +=
-                            this.Layers[layer - 1][i] * this.Neurons[layer].Weights[j][i]; // note +=
+                        field[layer][j] +=
+                            field[layer - 1][i] * this.Neurons[layer].Weights[j][i]; // note +=
                     }
                 }
 
-                this.Layers[layer] = this.ActivateFunction(this.Layers[layer], layer);
+                field[layer] = this.ActivateFunction(field[layer], layer);
             }
 
-            double[] retResult =
-                new double[this.Sizes[this.LayerCount - 1]]; // could define a GetOutputs method instead
-            Array.Copy(this.Layers[this.LayerCount - 1], retResult, retResult.Length);
-            return retResult;
+            return field[this.LayerCount - 1];
         }
 
         public double Accuracy(double[][] testData, double[] weights)
@@ -674,6 +693,21 @@ namespace ResilientBackProp
          */
         protected void ComputeGraduate(double[][] trainData, WeightComposite[] allGradsAcc)
         {
+            if (this.multiThread)
+            {
+                this.ComputeGraduateMultiThread(trainData, allGradsAcc);
+            }
+            else
+            {
+                this.ComputeGraduateSingleThread(trainData, allGradsAcc);
+            }
+        }
+
+        /**
+         * update all weights and biases
+         */
+        protected void ComputeGraduateSingleThread(double[][] trainData, WeightComposite[] allGradsAcc)
+        {
             int lastLayerId = this.LayerCount - 1;
             double[] xValues = new double[this.Sizes[0]]; // inputs
             double[] tValues = new double[this.Sizes[lastLayerId]]; // target values
@@ -700,6 +734,121 @@ namespace ResilientBackProp
                             grad = gradTerms[layer][j] * this.Layers[layer - 1][i];
                             allGradsAcc[layer].Weights[j][i] += grad;
                         }
+                    }
+                }
+            }
+        }
+
+        /**
+         * Подсчитываем градиент в несколько потоков
+         */
+        protected void ComputeGraduateMultiThread(double[][] trainData, WeightComposite[] allGradsAcc)
+        {
+            Thread[] threads = new Thread[this.threadCount];
+            ThreadInputDatum[] threadInputData = new ThreadInputDatum[this.threadCount];
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                threadInputData[i].field = new double[this.LayerCount][];
+                threadInputData[i].allGradsAcc = new WeightComposite[this.LayerCount];
+                for (int j = 0; j < this.LayerCount; j++)
+                {
+                    threadInputData[i].field[j] = new double[this.Sizes[j]];
+
+                    if (j <= 0) continue;
+                    threadInputData[i].allGradsAcc[j].Biases = new double[this.Sizes[j]];
+                    threadInputData[i].allGradsAcc[j].Weights = MakeMatrix(this.Sizes[j], this.Sizes[j - 1], 0.0);
+                }
+            }
+
+            List<double[]> innerTrainData = new List<double[]>(trainData);
+            while (innerTrainData.Count > 0)
+            {
+                int currentThread = -1;
+
+                for (int i = 0; i < this.threadCount; i++)
+                {
+                    // ReSharper disable once InvertIf
+                    if ((threads[i] == null) || !threads[i].IsAlive)
+                    {
+                        threads[i] = new Thread(this.ComputeGraduateInThread) {IsBackground = true};
+                        currentThread = i;
+                        break;
+                    }
+                }
+
+                if (currentThread == -1)
+                {
+                    Thread.Sleep(20);
+                    continue;
+                }
+
+                threadInputData[currentThread].trainDatum = innerTrainData[0];
+                innerTrainData.RemoveAt(0);
+
+                for (int layer = 1; layer < this.LayerCount; layer++)
+                {
+                    // zero-out values from prev iteration
+                    ZeroOut(threadInputData[currentThread].allGradsAcc[layer].Weights);
+                    ZeroOut(threadInputData[currentThread].allGradsAcc[layer].Biases);
+                }
+
+                threads[currentThread].Start(threadInputData[currentThread]);
+            }
+
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                if (threads[i] != null)
+                {
+                    threads[i].Join();
+                }
+            }
+
+            // Всё в allGradsAcc
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                for (int layer = 1; layer < this.LayerCount; layer++)
+                {
+                    for (int size = 0; size < this.Sizes[layer]; size++)
+                    {
+                        allGradsAcc[layer].Biases[size] += threadInputData[i].allGradsAcc[layer].Biases[size];
+                        for (int prev_size = 0; prev_size < this.Sizes[layer - 1]; prev_size++)
+                        {
+                            allGradsAcc[layer].Weights[size][prev_size]
+                                += threadInputData[i].allGradsAcc[layer].Weights[size][prev_size];
+                        }
+                    }
+                }
+            }
+        }
+
+        public void ComputeGraduateInThread(object input)
+        {
+            ThreadInputDatum inputDatum = (ThreadInputDatum) input;
+
+            int lastLayerId = this.LayerCount - 1;
+            double[] xValues = new double[this.Sizes[0]]; // inputs
+            double[] tValues = new double[this.Sizes[lastLayerId]]; // target values
+
+            // no need to visit in random order because all rows processed before any updates ('batch')
+            Array.Copy(inputDatum.trainDatum, xValues, this.Sizes[0]); // get the inputs
+            Array.Copy(inputDatum.trainDatum, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]); // get the target values
+            // copy xValues in, compute outputs using curr weights (and store outputs internally)
+            this.ComputeOutputs(xValues, inputDatum.field);
+
+            double[][] gradTerms = this.CalculateGradTerms(inputDatum.field, tValues);
+
+            for (int layer = lastLayerId; layer > 0; layer--)
+            {
+                // add input to h-o component to make h-o weight gradients, and accumulate
+                for (int j = 0; j < this.Sizes[layer]; ++j)
+                {
+                    double grad = gradTerms[layer][j];
+                    inputDatum.allGradsAcc[layer].Biases[j] += grad;
+
+                    for (int i = 0; i < this.Sizes[layer - 1]; ++i)
+                    {
+                        grad = gradTerms[layer][j] * inputDatum.field[layer - 1][i];
+                        inputDatum.allGradsAcc[layer].Weights[j][i] += grad;
                     }
                 }
             }
