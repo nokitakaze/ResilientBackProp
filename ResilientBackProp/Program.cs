@@ -950,7 +950,7 @@ namespace ResilientBackProp
                 threadInputData[i].tValues = new double[outputSize]; // targets
                 threadInputData[i].delim1 = 1.0 / trainData.Length;
                 threadInputData[i].delim2 = 1.0 / trainData.Length / outputSize;
-                threadInputData[i].sumSquaredErrors = new double[] {0, 0};
+                threadInputData[i].sumSquaredErrors = new double[2];
                 for (int j = 0; j < this.LayerCount; j++)
                 {
                     threadInputData[i].field[j] = new double[this.Sizes[j]];
@@ -1022,7 +1022,7 @@ namespace ResilientBackProp
                 // following assumes data has all x-values first, followed by y-values!
                 Array.Copy(t, threadInputDatum.xValues, this.Sizes[0]); // extract inputs
                 Array.Copy(t, this.Sizes[0], threadInputDatum.tValues, 0, outputSize); // extract targets
-                double[] yValues = this.ComputeOutputs(threadInputDatum.xValues);
+                double[] yValues = this.ComputeOutputs(threadInputDatum.xValues, threadInputDatum.field);
                 for (int j = 0; j < outputSize; ++j)
                 {
                     double err = Math.Pow(yValues[j] - threadInputDatum.tValues[j], 2);
