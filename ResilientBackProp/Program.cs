@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Diagnostics;
+using System.Threading.Tasks;
 
 // See "A Direct Adaptive Method for Faster Backpropagation Learning: The RPROP Algorithm",
 // M. Riedmiller and H. Braun,
@@ -209,6 +211,24 @@ namespace ResilientBackProp
         public double[][] trainDatum;
         public WeightComposite[] allGradsAcc;
         public double[][] field;
+
+        public double[] xValues;
+        public double[] tValues;
+
+        public double delim1;
+        public double delim2;
+        public double[] sumSquaredErrors;
+    }
+
+    public struct RMSEThreadInputDatum
+    {
+        public double[][] trainDatum;
+        public double[] xValues;
+        public double[] tValues;
+        public double[][] field;
+        public double delim1;
+        public double delim2;
+        public double[] sumSquaredErrors;
     }
 
     public class NeuralNetwork : AbstractNeuralNetwork
@@ -442,10 +462,16 @@ namespace ResilientBackProp
             }
 
             int epoch = 0;
+            Stopwatch timer1 = new Stopwatch();
+            Stopwatch timer2 = new Stopwatch();
+            Stopwatch timer3 = new Stopwatch();
+            timer3.Start();
             while (epoch < maxEpochs)
             {
                 ++epoch;
 
+                timer3.Stop();
+                timer1.Start();
                 // 1. compute and accumulate all gradients
                 for (int layer = 1; layer < this.LayerCount; layer++)
                 {
@@ -453,32 +479,41 @@ namespace ResilientBackProp
                     ZeroOut(allGradsAcc[layer].Weights);
                     ZeroOut(allGradsAcc[layer].Biases);
                 }
-                this.ComputeGraduate(trainData, allGradsAcc);
+                double[] err = this.ComputeGraduate(trainData, allGradsAcc);
                 // update all weights and biases (in any order)
                 this.UpdateWeigtsAndBiases(allGradsAcc, prevGradsAcc, prevDeltas);
+                timer1.Stop();
 
-                double[] currWts = this.GetWeights();
-                double[] err = RootMeanSquaredError(trainData, currWts);
+                timer3.Start();
+                Console.Write(".");
                 if ((epoch % 10 == 0) || (err[0] <= 0.0001))
                 {
+                    timer3.Stop();
+                    timer2.Start();
+                    double[] currWts = this.GetWeights();
                     double[] err_t = RootMeanSquaredError(testData, currWts);
-                    Console.WriteLine(".\nepoch = {0} err = {1:F4} [{2:F4}]\ttest err = {3:F4} [{4:F4}]",
+                    Console.WriteLine("\nepoch = {0} err = {1:F4} [{2:F4}]\ttest err = {3:F4} [{4:F4}]",
                         epoch, err[0], err[1], err_t[0], err_t[1]);
+                    timer2.Stop();
+                    timer3.Start();
                     this.Save($"epoch-{epoch}.dat");
                     if (err[0] <= 0.001)
                     {
-                        return currWts;
+                        break;
                     }
                 }
                 else
                 {
-                    Console.Write(".");
                     if (epoch % 5 == 0)
                     {
                         Console.Write(" ");
                     }
                 }
             } // while
+            timer3.Stop();
+            Console.WriteLine("Elapsed time. Neuro = {0}, RMSE calculation = {1}, Other work = {2}",
+                timer1.ElapsedMilliseconds / 1000, timer2.ElapsedMilliseconds / 1000,
+                timer3.ElapsedMilliseconds / 1000);
 
             double[] wts = this.GetWeights();
             return wts;
@@ -615,6 +650,13 @@ namespace ResilientBackProp
 
         public double[] RootMeanSquaredError(double[][] trainData, double[] weights)
         {
+            return this.multiThread
+                ? this.RootMeanSquaredErrorMultiThread(trainData, weights)
+                : this.RootMeanSquaredErrorSingleThread(trainData, weights);
+        }
+
+        public double[] RootMeanSquaredErrorSingleThread(double[][] trainData, double[] weights)
+        {
             this.SetWeights(weights); // copy the weights to evaluate in
 
             int lastLayerId = this.LayerCount - 1;
@@ -637,9 +679,7 @@ namespace ResilientBackProp
                     sumSquaredErrorItem += err / trainDataSize / outputSize;
                 }
             }
-            double[] d = new double[2];
-            d[0] = Math.Sqrt(sumSquaredErrorItem);
-            d[1] = Math.Sqrt(sumSquaredError);
+            double[] d = {Math.Sqrt(sumSquaredErrorItem), Math.Sqrt(sumSquaredError)};
             return d;
         }
 
@@ -678,33 +718,30 @@ namespace ResilientBackProp
         /**
          * update all weights and biases
          */
-        protected void ComputeGraduate(double[][] trainData, WeightComposite[] allGradsAcc)
+        protected double[] ComputeGraduate(double[][] trainData, WeightComposite[] allGradsAcc)
         {
-            if (this.multiThread)
-            {
-                this.ComputeGraduateMultiThread(trainData, allGradsAcc);
-            }
-            else
-            {
-                this.ComputeGraduateSingleThread(trainData, allGradsAcc);
-            }
+            return this.multiThread
+                ? this.ComputeGraduateMultiThread(trainData, allGradsAcc)
+                : this.ComputeGraduateSingleThread(trainData, allGradsAcc);
         }
 
         /**
          * update all weights and biases
          */
-        protected void ComputeGraduateSingleThread(double[][] trainData, WeightComposite[] allGradsAcc)
+        protected double[] ComputeGraduateSingleThread(double[][] trainData, WeightComposite[] allGradsAcc)
         {
             int lastLayerId = this.LayerCount - 1;
+            int outputSize = this.Sizes[lastLayerId];
             double[] xValues = new double[this.Sizes[0]]; // inputs
-            double[] tValues = new double[this.Sizes[lastLayerId]]; // target values
+            double[] tValues = new double[outputSize]; // target values
+            double[] sumSquaredErrors = {0, 0};
             foreach (double[] t in trainData)
             {
                 // no need to visit in random order because all rows processed before any updates ('batch')
                 Array.Copy(t, xValues, this.Sizes[0]); // get the inputs
-                Array.Copy(t, this.Sizes[0], tValues, 0, this.Sizes[lastLayerId]); // get the target values
+                Array.Copy(t, this.Sizes[0], tValues, 0, outputSize); // get the target values
                 // copy xValues in, compute outputs using curr weights (and store outputs internally)
-                this.ComputeOutputs(xValues);
+                double[] yValues = this.ComputeOutputs(xValues);
 
                 double[][] gradTerms = this.CalculateGradTerms(this.Layers, tValues);
 
@@ -723,20 +760,36 @@ namespace ResilientBackProp
                         }
                     }
                 }
+
+                for (int j = 0; j < outputSize; ++j)
+                {
+                    double err = Math.Pow(yValues[j] - tValues[j], 2);
+                    sumSquaredErrors[0] += err / trainData.Length;
+                    sumSquaredErrors[1] += err / trainData.Length / this.Sizes[this.LayerCount - 1];
+                }
             }
+
+            return sumSquaredErrors;
         }
 
         /**
          * Подсчитываем градиент в несколько потоков
          */
-        protected void ComputeGraduateMultiThread(double[][] trainData, WeightComposite[] allGradsAcc)
+        protected double[] ComputeGraduateMultiThread(double[][] trainData, WeightComposite[] allGradsAcc)
         {
-            Thread[] threads = new Thread[this.threadCount];
+            TaskFactory taskFactory = new TaskFactory();
+            Task[] tasks = new Task[this.threadCount];
             ThreadInputDatum[] threadInputData = new ThreadInputDatum[this.threadCount];
             for (int i = 0; i < this.threadCount; i++)
             {
                 threadInputData[i].field = new double[this.LayerCount][];
                 threadInputData[i].allGradsAcc = new WeightComposite[this.LayerCount];
+                threadInputData[i].xValues = new double[this.Sizes[0]]; // inputs
+                threadInputData[i].tValues = new double[this.Sizes[this.LayerCount - 1]]; // targets
+
+                threadInputData[i].delim1 = 1.0 / trainData.Length;
+                threadInputData[i].delim2 = 1.0 / trainData.Length / this.Sizes[this.LayerCount - 1];
+                threadInputData[i].sumSquaredErrors = new double[] {0, 0};
                 for (int j = 0; j < this.LayerCount; j++)
                 {
                     threadInputData[i].field[j] = new double[this.Sizes[j]];
@@ -757,9 +810,8 @@ namespace ResilientBackProp
                 for (int i = 0; i < this.threadCount; i++)
                 {
                     // ReSharper disable once InvertIf
-                    if ((threads[i] == null) || !threads[i].IsAlive)
+                    if ((tasks[i] == null) || tasks[i].IsCompleted)
                     {
-                        threads[i] = new Thread(this.ComputeGraduateInThread) {IsBackground = true};
                         currentThread = i;
                         break;
                     }
@@ -786,14 +838,15 @@ namespace ResilientBackProp
                     ZeroOut(threadInputData[currentThread].allGradsAcc[layer].Biases);
                 }
 
-                threads[currentThread].Start(threadInputData[currentThread]);
+                tasks[currentThread] =
+                    taskFactory.StartNew(this.ComputeGraduateInThread, threadInputData[currentThread]);
             }
 
             for (int i = 0; i < this.threadCount; i++)
             {
-                if (threads[i] != null)
+                if (tasks[i] != null)
                 {
-                    threads[i].Join();
+                    tasks[i].Wait();
                 }
             }
 
@@ -813,6 +866,17 @@ namespace ResilientBackProp
                     }
                 }
             }
+
+            double sumSquaredErrorItem = 0;
+            double sumSquaredError = 0;
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                sumSquaredError += threadInputData[i].sumSquaredErrors[0];
+                sumSquaredErrorItem += threadInputData[i].sumSquaredErrors[1];
+            }
+
+            double[] d = {Math.Sqrt(sumSquaredErrorItem), Math.Sqrt(sumSquaredError)};
+            return d;
         }
 
         public void ComputeGraduateInThread(object input)
@@ -820,19 +884,17 @@ namespace ResilientBackProp
             ThreadInputDatum inputDatum = (ThreadInputDatum) input;
 
             int lastLayerId = this.LayerCount - 1;
-            double[] xValues = new double[this.Sizes[0]]; // inputs
-            double[] tValues = new double[this.Sizes[lastLayerId]]; // target values
 
             foreach (double[] t in inputDatum.trainDatum)
             {
                 // no need to visit in random order because all rows processed before any updates ('batch')
-                Array.Copy(t, xValues, this.Sizes[0]); // get the inputs
-                Array.Copy(t, this.Sizes[0], tValues, 0,
-                    this.Sizes[lastLayerId]); // get the target values
+                Array.Copy(t, inputDatum.xValues, this.Sizes[0]); // get the inputs
+                // get the target values
+                Array.Copy(t, this.Sizes[0], inputDatum.tValues, 0, this.Sizes[lastLayerId]);
                 // copy xValues in, compute outputs using curr weights (and store outputs internally)
-                this.ComputeOutputs(xValues, inputDatum.field);
+                double[] yValues = this.ComputeOutputs(inputDatum.xValues, inputDatum.field);
 
-                double[][] gradTerms = this.CalculateGradTerms(inputDatum.field, tValues);
+                double[][] gradTerms = this.CalculateGradTerms(inputDatum.field, inputDatum.tValues);
 
                 for (int layer = lastLayerId; layer > 0; layer--)
                 {
@@ -848,6 +910,111 @@ namespace ResilientBackProp
                             inputDatum.allGradsAcc[layer].Weights[j][i] += grad;
                         }
                     }
+                }
+
+                for (int j = 0; j < this.Sizes[lastLayerId]; ++j)
+                {
+                    double err = Math.Pow(yValues[j] - inputDatum.tValues[j], 2);
+                    inputDatum.sumSquaredErrors[0] += err * inputDatum.delim1;
+                    inputDatum.sumSquaredErrors[1] += err * inputDatum.delim2;
+                }
+            }
+        }
+
+        public double[] RootMeanSquaredErrorMultiThread(double[][] trainData, double[] weights)
+        {
+            this.SetWeights(weights); // copy the weights to evaluate in
+            TaskFactory taskFactory = new TaskFactory();
+            Task[] tasks = new Task[this.threadCount];
+            int lastLayerId = this.LayerCount - 1;
+            int outputSize = this.Sizes[lastLayerId];
+
+            RMSEThreadInputDatum[] threadInputData = new RMSEThreadInputDatum[this.threadCount];
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                threadInputData[i].field = new double[this.LayerCount][];
+                threadInputData[i].xValues = new double[this.Sizes[0]]; // inputs
+                threadInputData[i].tValues = new double[outputSize]; // targets
+                threadInputData[i].delim1 = 1.0 / trainData.Length;
+                threadInputData[i].delim2 = 1.0 / trainData.Length / outputSize;
+                threadInputData[i].sumSquaredErrors = new double[2];
+                for (int j = 0; j < this.LayerCount; j++)
+                {
+                    threadInputData[i].field[j] = new double[this.Sizes[j]];
+                }
+            }
+
+            List<double[]> innerTrainData = new List<double[]>(trainData);
+            List<double[]> innerTrainDataChunk = new List<double[]>();
+            int chunk_size = (int) (innerTrainData.Count * 0.8 / this.threadCount);
+            while (innerTrainData.Count > 0)
+            {
+                int currentThread = -1;
+
+                for (int i = 0; i < this.threadCount; i++)
+                {
+                    // ReSharper disable once InvertIf
+                    if ((tasks[i] == null) || tasks[i].IsCompleted)
+                    {
+                        currentThread = i;
+                        break;
+                    }
+                }
+
+                if (currentThread == -1)
+                {
+                    Thread.Sleep(20);
+                    continue;
+                }
+
+                innerTrainDataChunk.Clear();
+                while ((innerTrainDataChunk.Count < chunk_size) && (innerTrainData.Count > 0))
+                {
+                    innerTrainDataChunk.Add(innerTrainData[0]);
+                    innerTrainData.RemoveAt(0);
+                }
+                threadInputData[currentThread].trainDatum = innerTrainDataChunk.ToArray();
+
+                tasks[currentThread] =
+                    taskFactory.StartNew(this.ComputeRMSEInThread, threadInputData[currentThread]);
+            }
+
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                if (tasks[i] != null)
+                {
+                    tasks[i].Wait();
+                }
+            }
+
+            double sumSquaredErrorItem = 0;
+            double sumSquaredError = 0;
+            for (int i = 0; i < this.threadCount; i++)
+            {
+                sumSquaredError += threadInputData[i].sumSquaredErrors[0];
+                sumSquaredErrorItem += threadInputData[i].sumSquaredErrors[1];
+            }
+
+            double[] d = {Math.Sqrt(sumSquaredErrorItem), Math.Sqrt(sumSquaredError)};
+            return d;
+        }
+
+        public void ComputeRMSEInThread(object input)
+        {
+            RMSEThreadInputDatum threadInputDatum = (RMSEThreadInputDatum) input;
+            int outputSize = this.Sizes[this.LayerCount - 1];
+
+            foreach (double[] t in threadInputDatum.trainDatum)
+            {
+                // following assumes data has all x-values first, followed by y-values!
+                Array.Copy(t, threadInputDatum.xValues, this.Sizes[0]); // extract inputs
+                Array.Copy(t, this.Sizes[0], threadInputDatum.tValues, 0, outputSize); // extract targets
+                double[] yValues = this.ComputeOutputs(threadInputDatum.xValues, threadInputDatum.field);
+                for (int j = 0; j < outputSize; ++j)
+                {
+                    double err = Math.Pow(yValues[j] - threadInputDatum.tValues[j], 2);
+                    threadInputDatum.sumSquaredErrors[0] += err * threadInputDatum.delim1;
+                    threadInputDatum.sumSquaredErrors[1] += err * threadInputDatum.delim2;
                 }
             }
         }
