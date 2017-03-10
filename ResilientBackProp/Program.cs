@@ -41,7 +41,6 @@ namespace ResilientBackProp
 
             Console.WriteLine("\nStarting RPROP training");
             nn.multiThread = true;
-            nn.threadCount = 1;
             double[] weights = nn.TrainRPROP(trainData, maxEpochs, testData); // RPROP
             nn.Save("after_test.dat");
             Console.WriteLine("Done");
