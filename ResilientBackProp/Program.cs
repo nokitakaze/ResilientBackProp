@@ -720,10 +720,12 @@ namespace ResilientBackProp
                 writer.Write(this.Sizes[i]);
             }
             double[] weights = this.GetWeights();
-            for (int id = 1; id < weights.Length; id++)
+            foreach (double t in weights)
             {
-                writer.Write(weights[id]);
+                writer.Write(t);
             }
+            writer.Write(0);
+            writer.Write(4);
             writer.Close();
             fo.Close();
         }
