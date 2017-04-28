@@ -21,8 +21,8 @@ namespace ResilientBackProp
         private static double[][] trainData;
         private static double[][] testData;
 
-        const int numInput = 7959; // number features
-        const int numOutput = 64; // number of classes for Y
+        const int numInput = 4143; // number features
+        const int numOutput = 66; // number of classes for Y
         const int numHidden = numOutput * 2;
 
         public static void Main(string[] args)
@@ -33,27 +33,34 @@ namespace ResilientBackProp
 
             Console.WriteLine("Create neural network");
             int[] sizes = {numInput, numHidden, numOutput};
+            //
             NeuralNetwork nn = new NeuralNetwork(sizes);
-            nn.Save("before_test.dat");
+            nn.Load("after_test.dat");
+            // nn.Save("before_test.dat");
+            double[] weights = nn.GetWeights();
+            Console.WriteLine("Get Accuracy for train and test data");
+            double trainAcc = nn.Accuracy(trainData, weights);
+            Console.WriteLine("\nAccuracy on training data = " + trainAcc.ToString("F4"));
+
+            double testAcc = nn.Accuracy(testData, weights);
+            Console.WriteLine("\nAccuracy on test data = " + testAcc.ToString("F4"));
 
             const int maxEpochs = 1000;
             Console.WriteLine("\nSetting maxEpochs = " + maxEpochs);
 
             Console.WriteLine("\nStarting RPROP training");
             nn.multiThread = true;
-            double[] weights = nn.TrainRPROP(trainData, maxEpochs, testData); // RPROP
+            weights = nn.TrainRPROP(trainData, maxEpochs, testData); // RPROP
             nn.Save("after_test.dat");
             Console.WriteLine("Done");
             Console.WriteLine("\nFinal neural network model weights:\n");
             // ShowVector(weights, 4, 10, true);
 
-            double trainAcc = nn.Accuracy(trainData, weights);
-            Console.WriteLine("\nAccuracy on training data = " +
-                              trainAcc.ToString("F4"));
+            trainAcc = nn.Accuracy(trainData, weights);
+            Console.WriteLine("\nAccuracy on training data = " + trainAcc.ToString("F4"));
 
-            double testAcc = nn.Accuracy(testData, weights);
-            Console.WriteLine("\nAccuracy on test data = " +
-                              testAcc.ToString("F4"));
+            testAcc = nn.Accuracy(testData, weights);
+            Console.WriteLine("\nAccuracy on test data = " + testAcc.ToString("F4"));
 
             Console.WriteLine("\nEnd neural network with Resilient Propagation demo\n");
             Console.ReadLine();
@@ -106,53 +113,50 @@ namespace ResilientBackProp
         protected static void LoadData()
         {
             DataContractJsonSerializer jsonFormatter =
-                new DataContractJsonSerializer(typeof(TemporaryJsonClassDA[]));
-            DataContractJsonSerializer jsonFormatterUID =
-                new DataContractJsonSerializer(typeof(TemporaryJsonClassI[]));
+                new DataContractJsonSerializer(typeof(TemporaryJsonClassDA));
 
-            const int learn_file_count = 2;//315;
-            const int test_file_count = 1;//90;
+            const int learn_file_count = 381;
+            const int test_file_count = 109;
 
             List<double[]> learn_data = new List<double[]>();
-            TemporaryJsonClassDA[] inner;
-            TemporaryJsonClassI[] outer;
+            TemporaryJsonClassDA inner;
 
-            double[] datum = new double[numInput + numOutput];
+            const string temporary_filename = "D:/_dev_stand/fp_txt_to_dat/output_json/_temporary.json";
             for (int i = 0; i < learn_file_count; i++)
             {
-                Console.WriteLine("Load Learn {0}", i);
-                string s = "D:/_dev_stand/fp_txt_to_dat/output_json/learn-" + i + ".json";
+                Console.WriteLine("Load Learn {0} from {1}", i, learn_file_count - 1);
+                string s = $"D:/_dev_stand/fp_txt_to_dat/output_json/learn-{i}.json";
                 using (FileStream fs = new FileStream(s, FileMode.Open))
                 {
-                    inner = (TemporaryJsonClassDA[]) jsonFormatter.ReadObject(fs);
+                    StreamReader r = new StreamReader(fs);
+                    string file_content = r.ReadToEnd();
+                    r.Close();
+                    StreamWriter outputFile = new StreamWriter(temporary_filename);
+                    outputFile.Write("{\"data\":" + file_content + '}');
+                    outputFile.Close();
+
+                    FileStream data_file = new FileStream(temporary_filename, FileMode.Open);
+                    inner = (TemporaryJsonClassDA) jsonFormatter.ReadObject(data_file);
+                    data_file.Close();
                 }
 
-                s = "D:/_dev_stand/fp_txt_to_dat/output_json/learn-" + i + ".out.json";
-                using (FileStream fs = new FileStream(s, FileMode.Open))
+                foreach (double[] t in inner.data)
                 {
-                    outer = (TemporaryJsonClassI[]) jsonFormatterUID.ReadObject(fs);
-                }
-                if (inner.Length != outer.Length)
-                {
-                    throw new Exception();
-                }
-
-                for (int j = 0; j < inner.Length; j++)
-                {
-                    if (inner[j].v.Length != numInput)
+                    if (t.Length != numInput + 1)
                     {
-                        throw new Exception();
+                        throw new Exception("Datum length is " + t.Length + ", but " + (numInput + 1) + " expected");
                     }
-                    Array.Copy(inner[j].v, datum, numInput);
+                    double[] datum = new double[numInput + numOutput];
+                    Array.Copy(t, 1, datum, 0, numInput - 1);
                     for (int n = numInput; n < numInput + numOutput; n++)
                     {
                         datum[n] = 0;
                     }
-                    if (outer[j].v >= numOutput)
+                    if (t[0] >= numOutput)
                     {
-                        throw new Exception();
+                        throw new Exception("Neuron 0 has " + t[0] + ", but maximum is " + numOutput);
                     }
-                    datum[outer[j].v + numInput] = 1;
+                    datum[(int) t[0] + numInput] = 1;
                     learn_data.Add(datum);
                 }
             }
@@ -161,40 +165,45 @@ namespace ResilientBackProp
 
             for (int i = 0; i < test_file_count; i++)
             {
-                Console.WriteLine("Load Test1 {0}", i);
-                string s = "D:/_dev_stand/fp_txt_to_dat/output_json/test1-" + i + ".json";
+                Console.WriteLine("Load Test1 {0} from {1}", i, test_file_count - 1);
+                string s = $"D:/_dev_stand/fp_txt_to_dat/output_json/test1-{i}.json";
                 using (FileStream fs = new FileStream(s, FileMode.Open))
                 {
-                    inner = (TemporaryJsonClassDA[]) jsonFormatter.ReadObject(fs);
-                }
+                    StreamReader r = new StreamReader(fs);
+                    string file_content = r.ReadToEnd();
+                    r.Close();
+                    StreamWriter outputFile = new StreamWriter(temporary_filename);
+                    outputFile.Write("{\"data\":" + file_content + '}');
+                    outputFile.Close();
 
-                s = "D:/_dev_stand/fp_txt_to_dat/output_json/test1-" + i + ".out.json";
-                using (FileStream fs = new FileStream(s, FileMode.Open))
-                {
-                    outer = (TemporaryJsonClassI[]) jsonFormatterUID.ReadObject(fs);
+                    FileStream data_file = new FileStream(temporary_filename, FileMode.Open);
+                    inner = (TemporaryJsonClassDA) jsonFormatter.ReadObject(data_file);
+                    data_file.Close();
                 }
-                if (inner.Length != outer.Length)
+                foreach (double[] t in inner.data)
                 {
-                    throw new Exception();
-                }
-
-                for (int j = 0; j < inner.Length; j++)
-                {
-                    if (inner[j].v.Length != numInput)
+                    if (t.Length != numInput + 1)
                     {
-                        throw new Exception();
+                        throw new Exception("Datum length is " + t.Length + ", but " + (numInput + 1) + " expected");
                     }
-                    Array.Copy(inner[j].v, datum, numInput);
+                    double[] datum = new double[numInput + numOutput];
+                    Array.Copy(t, 1, datum, 0, numInput - 1);
                     for (int n = numInput; n < numInput + numOutput; n++)
                     {
                         datum[n] = 0;
                     }
-                    if (outer[j].v >= numOutput)
+                    if (t[0] >= numOutput)
                     {
-                        throw new Exception();
+                        throw new Exception("Neuron 0 has " + t[0] + ", but maximum is " + numOutput);
                     }
-                    datum[outer[j].v + numInput] = 1;
+                    datum[(int) t[0] + numInput] = 1;
                     learn_data.Add(datum);
+                    if ((Math.Abs(learn_data[0][0] - 0.038095) > 0.0001) ||
+                        (Math.Abs(learn_data[0][1] - 0.19047619) > 0.0001) ||
+                        (Math.Abs(learn_data[0][2] - 0.1047619) > 0.0001))
+                    {
+                        throw new Exception("Data broken");
+                    }
                 }
             }
             testData = learn_data.ToArray();
@@ -204,13 +213,7 @@ namespace ResilientBackProp
     [DataContract]
     internal class TemporaryJsonClassDA
     {
-        [DataMember] public double[] v;
-    }
-
-    [DataContract]
-    internal class TemporaryJsonClassI
-    {
-        [DataMember] public int v;
+        [DataMember] public double[][] data;
     }
 
     public struct WeightComposite
@@ -250,7 +253,7 @@ namespace ResilientBackProp
         {
         }
 
-        protected override double[] ActivateFunction(IReadOnlyList<double>  rawValues, int layerId)
+        protected override double[] ActivateFunction(IReadOnlyList<double> rawValues, int layerId)
         {
             if (layerId >= this.LayerCount - 1)
             {
@@ -528,8 +531,7 @@ namespace ResilientBackProp
                 timer1.ElapsedMilliseconds / 1000, timer2.ElapsedMilliseconds / 1000,
                 timer3.ElapsedMilliseconds / 1000);
 
-            double[] wts = this.GetWeights();
-            return wts;
+            return this.GetWeights();
         } // Train
 
         protected static void ZeroOut(double[][] matrix)
@@ -710,10 +712,30 @@ namespace ResilientBackProp
             return bigIndex;
         }
 
+        public void Load(string filename)
+        {
+            FileStream fi = File.Open(filename, FileMode.Open);
+            BinaryReader reader = new BinaryReader(fi);
+            char[] buf_c = reader.ReadChars(4);
+            this.LayerCount = reader.ReadInt32();
+            for (int i = 0; i < this.LayerCount; i++)
+            {
+                this.Sizes[i] = reader.ReadInt32();
+            }
+            double[] weights = new double[this.GetWeightsCount()];
+            for (int i = 0; i < weights.Length; i++)
+            {
+                weights[i] = reader.ReadDouble();
+            }
+            this.SetWeights(weights);
+            fi.Close();
+        }
+
         public void Save(string filename)
         {
             FileStream fo = File.Open(filename, FileMode.Create);
             BinaryWriter writer = new BinaryWriter(fo);
+            writer.Write(0x4E4E4B4E);
             writer.Write(this.LayerCount);
             for (int i = 0; i < this.LayerCount; i++)
             {
