@@ -23,7 +23,7 @@ namespace ResilientBackProp
 
         const int numInput = 4143; // number features
         const int numOutput = 66; // number of classes for Y
-        const int numHidden = numOutput * 2;
+        const int numHidden = numOutput * 3;
 
         public static void Main(string[] args)
         {
@@ -35,7 +35,7 @@ namespace ResilientBackProp
             int[] sizes = {numInput, numHidden, numOutput};
             //
             NeuralNetwork nn = new NeuralNetwork(sizes);
-            nn.Load("after_test.dat");
+            // nn.Load("after_test.dat");
             // nn.Save("before_test.dat");
             double[] weights = nn.GetWeights();
             Console.WriteLine("Get Accuracy for train and test data");
@@ -115,8 +115,8 @@ namespace ResilientBackProp
             DataContractJsonSerializer jsonFormatter =
                 new DataContractJsonSerializer(typeof(TemporaryJsonClassDA));
 
-            const int learn_file_count = 381;
-            const int test_file_count = 109;
+            const int learn_file_count = 125; // 381;
+            const int test_file_count = 30; // 109;
 
             List<double[]> learn_data = new List<double[]>();
             TemporaryJsonClassDA inner;
@@ -198,12 +198,14 @@ namespace ResilientBackProp
                     }
                     datum[(int) t[0] + numInput] = 1;
                     learn_data.Add(datum);
+                    /*
                     if ((Math.Abs(learn_data[0][0] - 0.038095) > 0.0001) ||
                         (Math.Abs(learn_data[0][1] - 0.19047619) > 0.0001) ||
                         (Math.Abs(learn_data[0][2] - 0.1047619) > 0.0001))
                     {
                         throw new Exception("Data broken");
                     }
+                    */
                 }
             }
             testData = learn_data.ToArray();
